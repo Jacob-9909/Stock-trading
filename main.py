@@ -29,20 +29,24 @@ class StockAnalyzer:
             'sma_crossover': self._sma_crossover_strategy,
             'macd': self._macd_strategy,
             'rsi': self._rsi_strategy,
-            'combined': self._combined_strategy,
-            'obv': self._obv_strategy  # OBV 전략 추가
+            'obv': self._obv_strategy,  # OBV 전략 추가
+            'combined': self._combined_strategy
         }
         
-    def fetch_data(self):
-        """주식 데이터"""
-        print(f"{self.ticker} 주식 데이터를 가져오는 중...")
-        self.data = yf.download(self.ticker, start=self.start_date, end=self.end_date)
+    def fetch_data(self, verbose=False):
+        """주식 데이터를 가져옵니다."""
+        if verbose:
+            print(f"{self.ticker} 주식 데이터를 가져오는 중...")
+        self.data = yf.download(self.ticker, start=self.start_date, end=self.end_date, auto_adjust=False)
         
         if self.data.empty:
             raise ValueError(f"{self.ticker}에 대한 데이터를 가져올 수 없습니다.")
-            
-        print(f"데이터 가져오기 완료: {len(self.data)} 거래일")
+        
+        if verbose:
+            print(f"데이터 가져오기 완료: {len(self.data)} 거래일")
+            print(f"데이터 샘플:\n{self.data.head()}")
         return self.data
+
     
     def calculate_indicators(self):
         """기술적 지표를 계산"""
@@ -214,20 +218,11 @@ class StockAnalyzer:
         data['Position'] = data['Position'].replace(to_replace=0, value=np.nan).ffill().fillna(0)
         return data
 
-    def apply_strategy(self, strategy_name='sma_crossover'):
-        """선택한 전략을 적용합니다."""
-        if strategy_name not in self.strategies:
-            raise ValueError(f"지원하지 않는 전략입니다: {strategy_name}")
-        
-        strategy_func = self.strategies[strategy_name]
-        return strategy_func(self.data)
-    
     def backtest(self, strategy_name='sma_crossover'):
-        if self.data is None:
-            self.fetch_data()
-            self.calculate_indicators()
+        if self.data is None or self.data.empty:
+            raise ValueError(f"{self.ticker}에 대한 데이터가 비어있습니다.")
+        
         data = self.data.copy()
-        # 전략 함수가 복사본을 받아서 결과 반환
         strategy_func = self.strategies[strategy_name]
         data = strategy_func(data)
         
@@ -235,12 +230,19 @@ class StockAnalyzer:
         data['Returns'] = data['Close'].pct_change()
         data['Strategy_Returns'] = data['Position'].shift(1) * data['Returns']
         
+        # NaN 값 처리 (NaN이 있을 경우 0으로 채우기)
+        data['Strategy_Returns'] = data['Strategy_Returns'].fillna(0)
+        
         # 누적 수익률 계산
         data['Cumulative_Returns'] = (1 + data['Returns']).cumprod()
         data['Strategy_Cumulative_Returns'] = (1 + data['Strategy_Returns']).cumprod()
-        
+
         # 포트폴리오 가치 계산
         data['Portfolio_Value'] = self.initial_capital * data['Strategy_Cumulative_Returns']
+        
+        # # 마지막 인덱스 확인
+        # print(f"최종 인덱스: {data.index[-1]}")  # 마지막 인덱스 확인
+        # print(f"최종 포트폴리오 가치: {data['Portfolio_Value'].iloc[-1]:,.0f}")  # 포트폴리오 가치 확인
         
         # 거래 횟수 계산
         data['Trades'] = data['Signal'].abs()
@@ -268,6 +270,8 @@ class StockAnalyzer:
         print(f"최대 낙폭: {max_drawdown:.2%}")
         print(f"최종 포트폴리오 가치: {data['Portfolio_Value'].iloc[-1]:,.0f}원")
         
+        self.data = data
+
         return {
             'total_trades': total_trades,
             'total_return': total_return,
@@ -276,7 +280,6 @@ class StockAnalyzer:
             'max_drawdown': max_drawdown,
             'final_value': data['Portfolio_Value'].iloc[-1]
         }
-    
 
     def plot_results(self, strategy_name='sma_crossover'):
         """백테스팅 결과를 시각화합니다."""
@@ -353,13 +356,70 @@ class StockAnalyzer:
         plt.tight_layout()
         plt.show()
     
+    # def compare_strategies(self):
+    #     """여러 전략의 성능을 비교합니다."""
+    #     results = {}
+    #     rc('font', family='Malgun Gothic')  # Windows의 '맑은 고딕' 폰트 사용
+    #     for strategy_name in self.strategies.keys():
+    #         print(f"\n{strategy_name} 전략 백테스팅 중...")
+    #         # 각 전략마다 원본 데이터 새로 가져오기 및 지표 계산
+    #         analyzer = StockAnalyzer(self.ticker, self.start_date, self.end_date, self.initial_capital)
+    #         analyzer.fetch_data();
+    #         analyzer.calculate_indicators();
+    #         results[strategy_name] = analyzer.backtest(strategy_name)
+        
+    #     # 결과 비교 테이블 생성
+    #     comparison = pd.DataFrame(results).T
+    #     comparison.columns = ['총 거래 횟수', '총 수익률', '매수 후 보유 수익률', '연간 수익률', '최대 낙폭', '최종 포트폴리오 가치']
+    #     comparison['총 수익률'] = comparison['총 수익률'].apply(lambda x: f"{x:.2%}")
+    #     comparison['매수 후 보유 수익률'] = comparison['매수 후 보유 수익률'].apply(lambda x: f"{x:.2%}")
+    #     comparison['연간 수익률'] = comparison['연간 수익률'].apply(lambda x: f"{x:.2%}")
+    #     comparison['최대 낙폭'] = comparison['최대 낙폭'].apply(lambda x: f"{x:.2%}")
+    #     comparison['최종 포트폴리오 가치'] = comparison['최종 포트폴리오 가치'].apply(lambda x: f"{x:,.0f}원")
+        
+    #     print("\n===== 전략 비교 =====")
+    #     print(comparison)
+        
+    #     # 누적 수익률 비교 차트
+    #     buy_hold_cumulative = (1 + self.data['Close'].pct_change()).cumprod()
+    #     plt.figure(figsize=(12, 6))
+    #     for strategy_name in self.strategies.keys():
+    #         # 각 전략마다 원본 데이터 새로 가져오기 및 지표 계산
+    #         analyzer = StockAnalyzer(self.ticker, self.start_date, self.end_date, self.initial_capital)
+    #         analyzer.fetch_data();
+    #         analyzer.calculate_indicators();
+    #         analyzer.backtest(strategy_name)
+    #         plt.plot(analyzer.data.index, analyzer.data['Strategy_Cumulative_Returns'], label=strategy_name)
+    #     plt.plot(self.data.index, buy_hold_cumulative, label='매수 후 보유', linestyle='--')
+    #     plt.title('전략별 누적 수익률 비교', fontsize=15)
+    #     plt.xlabel('날짜', fontsize=12)
+    #     plt.ylabel('누적 수익률', fontsize=12)
+    #     plt.legend(loc='best')
+    #     plt.grid(True)
+    #     plt.tight_layout()
+    #     plt.show()
+        
+    #     return comparison
     def compare_strategies(self):
         """여러 전략의 성능을 비교합니다."""
         results = {}
         rc('font', family='Malgun Gothic')  # Windows의 '맑은 고딕' 폰트 사용
+        
+        # 전략을 한 번에 처리하고, 결과 저장
+        comparison_data = {}
         for strategy_name in self.strategies.keys():
-            print(f"\n{strategy_name} 전략 백테스팅 중...")
-            results[strategy_name] = self.backtest(strategy_name)
+            # print(f"\n{strategy_name} 전략 백테스팅 중...")
+            
+            # 각 전략마다 원본 데이터 새로 가져오기 및 지표 계산
+            analyzer = StockAnalyzer(self.ticker, self.start_date, self.end_date, self.initial_capital)
+            analyzer.fetch_data(verbose=False)
+            analyzer.calculate_indicators()
+            
+            # 백테스트 수행하고 결과 저장
+            results[strategy_name] = analyzer.backtest(strategy_name)
+            
+            # 누적 수익률 저장
+            comparison_data[strategy_name] = analyzer.data['Strategy_Cumulative_Returns']
         
         # 결과 비교 테이블 생성
         comparison = pd.DataFrame(results).T
@@ -376,13 +436,12 @@ class StockAnalyzer:
         # 누적 수익률 비교 차트
         buy_hold_cumulative = (1 + self.data['Close'].pct_change()).cumprod()
         plt.figure(figsize=(12, 6))
-        for strategy_name in self.strategies.keys():
-            self.apply_strategy(strategy_name)
-            if 'Returns' not in self.data.columns:
-                self.data['Returns'] = self.data['Close'].pct_change()
-            self.data[f'{strategy_name}_returns'] = self.data['Position'].shift(1) * self.data['Returns']
-            self.data[f'{strategy_name}_cumulative'] = (1 + self.data[f'{strategy_name}_returns']).cumprod()
-            plt.plot(self.data.index, self.data[f'{strategy_name}_cumulative'], label=strategy_name)
+        
+        # 각 전략의 누적 수익률을 한 번의 반복 내에서 그리기
+        for strategy_name, strategy_cumulative_returns in comparison_data.items():
+            plt.plot(self.data.index, strategy_cumulative_returns, label=strategy_name)
+        
+        # 매수 후 보유 라인 추가
         plt.plot(self.data.index, buy_hold_cumulative, label='매수 후 보유', linestyle='--')
         plt.title('전략별 누적 수익률 비교', fontsize=15)
         plt.xlabel('날짜', fontsize=12)
