@@ -239,10 +239,7 @@ class StockAnalyzer:
 
         # 포트폴리오 가치 계산
         data['Portfolio_Value'] = self.initial_capital * data['Strategy_Cumulative_Returns']
-        
-        # # 마지막 인덱스 확인
-        # print(f"최종 인덱스: {data.index[-1]}")  # 마지막 인덱스 확인
-        # print(f"최종 포트폴리오 가치: {data['Portfolio_Value'].iloc[-1]:,.0f}")  # 포트폴리오 가치 확인
+
         
         # 거래 횟수 계산
         data['Trades'] = data['Signal'].abs()
@@ -356,50 +353,6 @@ class StockAnalyzer:
         plt.tight_layout()
         plt.show()
     
-    # def compare_strategies(self):
-    #     """여러 전략의 성능을 비교합니다."""
-    #     results = {}
-    #     rc('font', family='Malgun Gothic')  # Windows의 '맑은 고딕' 폰트 사용
-    #     for strategy_name in self.strategies.keys():
-    #         print(f"\n{strategy_name} 전략 백테스팅 중...")
-    #         # 각 전략마다 원본 데이터 새로 가져오기 및 지표 계산
-    #         analyzer = StockAnalyzer(self.ticker, self.start_date, self.end_date, self.initial_capital)
-    #         analyzer.fetch_data();
-    #         analyzer.calculate_indicators();
-    #         results[strategy_name] = analyzer.backtest(strategy_name)
-        
-    #     # 결과 비교 테이블 생성
-    #     comparison = pd.DataFrame(results).T
-    #     comparison.columns = ['총 거래 횟수', '총 수익률', '매수 후 보유 수익률', '연간 수익률', '최대 낙폭', '최종 포트폴리오 가치']
-    #     comparison['총 수익률'] = comparison['총 수익률'].apply(lambda x: f"{x:.2%}")
-    #     comparison['매수 후 보유 수익률'] = comparison['매수 후 보유 수익률'].apply(lambda x: f"{x:.2%}")
-    #     comparison['연간 수익률'] = comparison['연간 수익률'].apply(lambda x: f"{x:.2%}")
-    #     comparison['최대 낙폭'] = comparison['최대 낙폭'].apply(lambda x: f"{x:.2%}")
-    #     comparison['최종 포트폴리오 가치'] = comparison['최종 포트폴리오 가치'].apply(lambda x: f"{x:,.0f}원")
-        
-    #     print("\n===== 전략 비교 =====")
-    #     print(comparison)
-        
-    #     # 누적 수익률 비교 차트
-    #     buy_hold_cumulative = (1 + self.data['Close'].pct_change()).cumprod()
-    #     plt.figure(figsize=(12, 6))
-    #     for strategy_name in self.strategies.keys():
-    #         # 각 전략마다 원본 데이터 새로 가져오기 및 지표 계산
-    #         analyzer = StockAnalyzer(self.ticker, self.start_date, self.end_date, self.initial_capital)
-    #         analyzer.fetch_data();
-    #         analyzer.calculate_indicators();
-    #         analyzer.backtest(strategy_name)
-    #         plt.plot(analyzer.data.index, analyzer.data['Strategy_Cumulative_Returns'], label=strategy_name)
-    #     plt.plot(self.data.index, buy_hold_cumulative, label='매수 후 보유', linestyle='--')
-    #     plt.title('전략별 누적 수익률 비교', fontsize=15)
-    #     plt.xlabel('날짜', fontsize=12)
-    #     plt.ylabel('누적 수익률', fontsize=12)
-    #     plt.legend(loc='best')
-    #     plt.grid(True)
-    #     plt.tight_layout()
-    #     plt.show()
-        
-    #     return comparison
     def compare_strategies(self):
         """여러 전략의 성능을 비교합니다."""
         results = {}
@@ -408,9 +361,8 @@ class StockAnalyzer:
         # 전략을 한 번에 처리하고, 결과 저장
         comparison_data = {}
         for strategy_name in self.strategies.keys():
-            # print(f"\n{strategy_name} 전략 백테스팅 중...")
+            print(f"\n{strategy_name} 전략 백테스팅 중...")
             
-            # 각 전략마다 원본 데이터 새로 가져오기 및 지표 계산
             analyzer = StockAnalyzer(self.ticker, self.start_date, self.end_date, self.initial_capital)
             analyzer.fetch_data(verbose=False)
             analyzer.calculate_indicators()
@@ -453,6 +405,150 @@ class StockAnalyzer:
         
         return comparison
 
+    def grid_search(self, strategy_name):
+        """전략별 파라미터 그리드 서치"""
+        best_result = None
+        best_params = None
+        results = []
+
+        # 각 전략별 탐색할 파라미터 정의
+        if strategy_name == 'sma_crossover':
+            param_grid = {
+                'short_window': [3, 5, 7, 10],
+                'long_window': [10, 15, 20, 30]
+            }
+            for short in param_grid['short_window']:
+                for long in param_grid['long_window']:
+                    if short >= long:
+                        continue
+                    data = self.data.copy()
+                    data['SMA_short'] = data['Close'].rolling(window=short).mean()
+                    data['SMA_long'] = data['Close'].rolling(window=long).mean()
+                    data['Signal'] = 0
+                    data.loc[(data['SMA_short'] > data['SMA_long']) & (data['SMA_short'].shift(1) <= data['SMA_long'].shift(1)), 'Signal'] = 1
+                    data.loc[(data['SMA_short'] < data['SMA_long']) & (data['SMA_short'].shift(1) >= data['SMA_long'].shift(1)), 'Signal'] = -1
+                    data['Position'] = data['Signal'].replace(to_replace=0, value=np.nan).ffill().fillna(0)
+                    data['Returns'] = data['Close'].pct_change()
+                    data['Strategy_Returns'] = data['Position'].shift(1) * data['Returns']
+                    data['Strategy_Returns'] = data['Strategy_Returns'].fillna(0)
+                    data['Strategy_Cumulative_Returns'] = (1 + data['Strategy_Returns']).cumprod()
+                    total_return = data['Strategy_Cumulative_Returns'].iloc[-1] - 1
+                    results.append({'params': (short, long), 'total_return': total_return})
+                    print(f"short_window={short}, long_window={long} -> 총 수익률: {total_return:.2%}")
+                    if best_result is None or total_return > best_result:
+                        best_result = total_return
+                        best_params = (short, long)
+            print(f"[sma_crossover] 최적 파라미터: short_window={best_params[0]}, long_window={best_params[1]}, 총 수익률: {best_result:.2%}")
+            return best_params, best_result
+
+        elif strategy_name == 'macd':
+            param_grid = {
+                'fast': [5, 8, 12],
+                'slow': [10, 17, 26],
+                'signal': [5, 9, 12]
+            }
+            for fast in param_grid['fast']:
+                for slow in param_grid['slow']:
+                    if fast >= slow:
+                        continue
+                    for signal in param_grid['signal']:
+                        data = self.data.copy()
+                        data['EMA_fast'] = data['Close'].ewm(span=fast, adjust=False).mean()
+                        data['EMA_slow'] = data['Close'].ewm(span=slow, adjust=False).mean()
+                        data['MACD'] = data['EMA_fast'] - data['EMA_slow']
+                        data['Signal_Line'] = data['MACD'].ewm(span=signal, adjust=False).mean()
+                        data['Signal'] = 0
+                        data.loc[(data['MACD'] > data['Signal_Line']) & (data['MACD'].shift(1) <= data['Signal_Line'].shift(1)), 'Signal'] = 1
+                        data.loc[(data['MACD'] < data['Signal_Line']) & (data['MACD'].shift(1) >= data['Signal_Line'].shift(1)), 'Signal'] = -1
+                        data['Position'] = data['Signal'].replace(to_replace=0, value=np.nan).ffill().fillna(0)
+                        data['Returns'] = data['Close'].pct_change()
+                        data['Strategy_Returns'] = data['Position'].shift(1) * data['Returns']
+                        data['Strategy_Returns'] = data['Strategy_Returns'].fillna(0)
+                        data['Strategy_Cumulative_Returns'] = (1 + data['Strategy_Returns']).cumprod()
+                        total_return = data['Strategy_Cumulative_Returns'].iloc[-1] - 1
+                        results.append({'params': (fast, slow, signal), 'total_return': total_return})
+                        print(f"fast={fast}, slow={slow}, signal={signal} -> 총 수익률: {total_return:.2%}")
+                        if best_result is None or total_return > best_result:
+                            best_result = total_return
+                            best_params = (fast, slow, signal)
+            print(f"[macd] 최적 파라미터: fast={best_params[0]}, slow={best_params[1]}, signal={best_params[2]}, 총 수익률: {best_result:.2%}")
+            return best_params, best_result
+
+        elif strategy_name == 'rsi':
+            param_grid = {
+                'window': [7, 10, 14, 20],
+                'buy_th': [30, 35, 40, 45],
+                'sell_th': [55, 60, 65, 70]
+            }
+            for window in param_grid['window']:
+                for buy_th in param_grid['buy_th']:
+                    for sell_th in param_grid['sell_th']:
+                        if buy_th >= sell_th:
+                            continue
+                        data = self.data.copy()
+                        delta = data['Close'].diff()
+                        gain = delta.where(delta > 0, 0)
+                        loss = -delta.where(delta < 0, 0)
+                        avg_gain = gain.rolling(window=window).mean()
+                        avg_loss = loss.rolling(window=window).mean()
+                        rs = avg_gain / avg_loss
+                        data['RSI'] = 100 - (100 / (1 + rs))
+                        data['Signal'] = 0
+                        data.loc[(data['RSI'] > buy_th) & (data['RSI'].shift(1) <= buy_th), 'Signal'] = 1
+                        data.loc[(data['RSI'] < sell_th) & (data['RSI'].shift(1) >= sell_th), 'Signal'] = -1
+                        data['Position'] = data['Signal'].replace(to_replace=0, value=np.nan).ffill().fillna(0)
+                        data['Returns'] = data['Close'].pct_change()
+                        data['Strategy_Returns'] = data['Position'].shift(1) * data['Returns']
+                        data['Strategy_Returns'] = data['Strategy_Returns'].fillna(0)
+                        data['Strategy_Cumulative_Returns'] = (1 + data['Strategy_Returns']).cumprod()
+                        total_return = data['Strategy_Cumulative_Returns'].iloc[-1] - 1
+                        results.append({'params': (window, buy_th, sell_th), 'total_return': total_return})
+                        print(f"window={window}, buy_th={buy_th}, sell_th={sell_th} -> 총 수익률: {total_return:.2%}")
+                        if best_result is None or total_return > best_result:
+                            best_result = total_return
+                            best_params = (window, buy_th, sell_th)
+            print(f"[rsi] 최적 파라미터: window={best_params[0]}, buy_th={best_params[1]}, sell_th={best_params[2]}, 총 수익률: {best_result:.2%}")
+            return best_params, best_result
+
+        elif strategy_name == 'obv':
+            param_grid = {
+                'obv_window': [3, 5, 7, 10]
+            }
+            for obv_window in param_grid['obv_window']:
+                data = self.data.copy()
+                data['OBV'] = 0
+                data['OBV'] = np.where(
+                    data['Close'] > data['Close'].shift(1),
+                    data['Volume'],
+                    np.where(
+                        data['Close'] < data['Close'].shift(1),
+                        -data['Volume'],
+                        0
+                    )
+                )
+                data['OBV'] = data['OBV'].cumsum()
+                data['OBV_SMA'] = data['OBV'].rolling(window=obv_window).mean()
+                data['Signal'] = 0
+                data.loc[(data['OBV'] > data['OBV_SMA']) & (data['OBV'].shift(1) <= data['OBV_SMA'].shift(1)), 'Signal'] = 1
+                data.loc[(data['OBV'] < data['OBV_SMA']) & (data['OBV'].shift(1) >= data['OBV_SMA'].shift(1)), 'Signal'] = -1
+                data['Position'] = data['Signal'].replace(to_replace=0, value=np.nan).ffill().fillna(0)
+                data['Returns'] = data['Close'].pct_change()
+                data['Strategy_Returns'] = data['Position'].shift(1) * data['Returns']
+                data['Strategy_Returns'] = data['Strategy_Returns'].fillna(0)
+                data['Strategy_Cumulative_Returns'] = (1 + data['Strategy_Returns']).cumprod()
+                total_return = data['Strategy_Cumulative_Returns'].iloc[-1] - 1
+                results.append({'params': (obv_window,), 'total_return': total_return})
+                print(f"obv_window={obv_window} -> 총 수익률: {total_return:.2%}")
+                if best_result is None or total_return > best_result:
+                    best_result = total_return
+                    best_params = (obv_window,)
+            print(f"[obv] 최적 파라미터: obv_window={best_params[0]}, 총 수익률: {best_result:.2%}")
+            return best_params, best_result
+
+        else:
+            print("해당 전략은 그리드 서치가 지원되지 않습니다.")
+            return None, None
+
 def parse_args():
     """명령줄 인자를 파싱합니다."""
     parser = argparse.ArgumentParser(description='주식 거래 결정 시스템')
@@ -476,6 +572,9 @@ def parse_args():
     parser.add_argument('--compare', action='store_true',
                         help='모든 전략을 비교합니다')
     
+    parser.add_argument('--grid_search', type=str, metavar='STRATEGY',
+                        help='전략별 파라미터 그리드 서치를 수행합니다 (예: --grid_search macd)')
+    
     return parser.parse_args()
 
 def main():
@@ -495,7 +594,10 @@ def main():
     analyzer.fetch_data()
     analyzer.calculate_indicators()
     
-    if args.compare:
+    if args.grid_search:
+        # grid_search 인자가 문자열(전략명)일 때만 실행
+        analyzer.grid_search(args.grid_search)
+    elif args.compare:
         # 모든 전략 비교
         analyzer.compare_strategies()
     else:
