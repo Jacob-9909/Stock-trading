@@ -29,8 +29,8 @@ class StockAnalyzer:
             'sma_crossover': self._sma_crossover_strategy,
             'macd': self._macd_strategy,
             'rsi': self._rsi_strategy,
-            'bollinger': self._bollinger_bands_strategy,
-            'combined': self._combined_strategy
+            'combined': self._combined_strategy,
+            'obv': self._obv_strategy  # OBV 전략 추가
         }
         
     def fetch_data(self):
@@ -67,14 +67,21 @@ class StockAnalyzer:
         rs = avg_gain / avg_loss
         self.data['RSI'] = 100 - (100 / (1 + rs)) # 14일 RSI, 30 이하 매수, 70 이상 매도
         
-        # 볼린저 밴드 (Bollinger Bands)
-        self.data['BB_Middle'] = self.data['Close'].rolling(window=5).mean() # 중간 밴드  
-        self.data['BB_Std'] = self.data['Close'].rolling(window=5).std() # 표준편차
-        self.data['BB_Upper'] = self.data['BB_Middle'] + (self.data['BB_Std'] * 2) # 상단 밴드
-        self.data['BB_Lower'] = self.data['BB_Middle'] - (self.data['BB_Std'] * 2) # 하단 밴드
-        
         # 거래량 지표
         self.data['Volume_SMA_5'] = self.data['Volume'].rolling(window=5).mean()
+        
+        # OBV 계산
+        self.data['OBV'] = 0
+        self.data['OBV'] = np.where(
+            self.data['Close'] > self.data['Close'].shift(1),
+            self.data['Volume'],
+            np.where(
+                self.data['Close'] < self.data['Close'].shift(1),
+                -self.data['Volume'],
+                0
+            )
+        )
+        self.data['OBV'] = self.data['OBV'].cumsum()
         
         # NaN 값 제거
         self.data = self.data.dropna()
@@ -133,31 +140,30 @@ class StockAnalyzer:
         
         return self.data
     
-    def _bollinger_bands_strategy(self):
-        """볼린저 밴드 전략"""
+    def _obv_strategy(self):
+        """OBV(온-밸런스 볼륨) 전략"""
         self.data['Signal'] = 0
-        
-        # 가격이 하단 밴드 아래로 내려갔다가 다시 상승 (매수 신호)
-        close_gt_lower = self.data['Close'] > self.data['BB_Lower']
-        close_shift_lte_lower_shift = self.data['Close'].shift(1) <= self.data['BB_Lower'].shift(1)
-        self.data.loc[close_gt_lower & close_shift_lte_lower_shift, 'Signal'] = 1
-        
-        # 가격이 상단 밴드 위로 올라갔다가 다시 하락 (매도 신호)
-        close_lt_upper = self.data['Close'] < self.data['BB_Upper']
-        close_shift_gte_upper_shift = self.data['Close'].shift(1) >= self.data['BB_Upper'].shift(1)
-        self.data.loc[close_lt_upper & close_shift_gte_upper_shift, 'Signal'] = -1
-        
-        # 포지션 유지
+        # OBV가 5일 OBV 이동평균선을 상향 돌파하면 매수, 하향 돌파하면 매도
+        self.data['OBV_SMA_5'] = self.data['OBV'].rolling(window=5).mean()
+        self.data.loc[
+            (self.data['OBV'] > self.data['OBV_SMA_5']) &
+            (self.data['OBV'].shift(1) <= self.data['OBV_SMA_5'].shift(1)),
+            'Signal'
+        ] = 1
+        self.data.loc[
+            (self.data['OBV'] < self.data['OBV_SMA_5']) &
+            (self.data['OBV'].shift(1) >= self.data['OBV_SMA_5'].shift(1)),
+            'Signal'
+        ] = -1
         self.data['Position'] = self.data['Signal'].copy()
         self.data['Position'] = self.data['Position'].replace(to_replace=0, value=np.nan).ffill().fillna(0)
-        
         return self.data
     
     def _combined_strategy(self):
-        """여러 전략을 결합한 전략"""
+        """여러 전략을 결합한 전략 (OBV 포함)"""
         # 각 전략의 신호를 계산
         self.data['Signal'] = 0
-        
+
         # SMA 전략
         sma_data = self.data.copy()
         sma_data.loc[(sma_data['SMA_5'] > sma_data['SMA_10']) & 
@@ -165,59 +171,49 @@ class StockAnalyzer:
         sma_data.loc[(sma_data['SMA_5'] < sma_data['SMA_10']) & 
                      (sma_data['SMA_5'].shift(1) >= sma_data['SMA_10'].shift(1)), 'Signal'] = -1
         self.data['SMA_Signal'] = sma_data['Signal']
-        
+
         # MACD 전략
         macd_data = self.data.copy()
         macd_data.loc[(macd_data['MACD'] > macd_data['Signal_Line']) & 
-                      (macd_data['MACD'].shift(1) <= macd_data['Signal_Line'].shift(1)), 'Signal'] = 1
+                      (macd_data['MACD'].shift() <= macd_data['Signal_Line'].shift()), 'Signal'] = 1
         macd_data.loc[(macd_data['MACD'] < macd_data['Signal_Line']) & 
-                      (macd_data['MACD'].shift(1) >= macd_data['Signal_Line'].shift(1)), 'Signal'] = -1
+                      (macd_data['MACD'].shift() >= macd_data['Signal_Line'].shift()), 'Signal'] = -1
         self.data['MACD_Signal'] = macd_data['Signal']
-        
+
         # RSI 전략
         rsi_data = self.data.copy()
-        rsi_data.loc[(rsi_data['RSI'] > 30) & (rsi_data['RSI'].shift(1) <= 30), 'Signal'] = 1
-        rsi_data.loc[(rsi_data['RSI'] < 70) & (rsi_data['RSI'].shift(1) >= 70), 'Signal'] = -1
+        rsi_data.loc[(rsi_data['RSI'] > 40) & (rsi_data['RSI'].shift(1) <= 40), 'Signal'] = 1
+        rsi_data.loc[(rsi_data['RSI'] < 60) & (rsi_data['RSI'].shift(1) >= 60), 'Signal'] = -1
         self.data['RSI_Signal'] = rsi_data['Signal']
-        
-        # 볼린저 밴드 전략
-        bb_data = self.data.copy()
-        close_gt_lower = bb_data['Close'] > bb_data['BB_Lower']
-        close_shift_lte_lower_shift = bb_data['Close'].shift(1) <= bb_data['BB_Lower'].shift(1)
-        bb_data.loc[close_gt_lower & close_shift_lte_lower_shift, 'Signal'] = 1
-        
-        close_lt_upper = bb_data['Close'] < bb_data['BB_Upper']
-        close_shift_gte_upper_shift = bb_data['Close'].shift(1) >= bb_data['BB_Upper'].shift(1)
-        bb_data.loc[close_lt_upper & close_shift_gte_upper_shift, 'Signal'] = -1
-        self.data['BB_Signal'] = bb_data['Signal']
-        
-        # 결합된 신호 계산 (가중치 적용 가능)
+
+        # OBV 전략
+        obv_data = self.data.copy()
+        obv_data['OBV_SMA_5'] = obv_data['OBV'].rolling(window=5).mean()
+        obv_data['OBV_Signal'] = 0
+        obv_data.loc[(obv_data['OBV'] > obv_data['OBV_SMA_5']) & (obv_data['OBV'].shift(1) <= obv_data['OBV_SMA_5'].shift(1)), 'OBV_Signal'] = 1
+        obv_data.loc[(obv_data['OBV'] < obv_data['OBV_SMA_5']) & (obv_data['OBV'].shift(1) >= obv_data['OBV_SMA_5'].shift(1)), 'OBV_Signal'] = -1
+        self.data['OBV_Signal'] = obv_data['OBV_Signal']
+
+        # 결합된 신호 계산 (4개 전략 중 3개 이상 동의 시 신호)
         self.data['Signal'] = 0
-        
-        # 매수 신호: 최소 2개 이상의 전략에서 매수 신호가 발생하고, 매도 신호가 없을 때
-        buy_signals = (self.data['SMA_Signal'] + self.data['MACD_Signal'] + 
-                       self.data['RSI_Signal'] + self.data['BB_Signal'] > 0)
-        buy_count = self.data['SMA_Signal'].clip(lower=0) + self.data['MACD_Signal'].clip(lower=0) + \
-                    self.data['RSI_Signal'].clip(lower=0) + self.data['BB_Signal'].clip(lower=0)
-        
-        # 매도 신호: 최소 2개 이상의 전략에서 매도 신호가 발생하고, 매수 신호가 없을 때
-        sell_signals = (self.data['SMA_Signal'] + self.data['MACD_Signal'] + 
-                        self.data['RSI_Signal'] + self.data['BB_Signal'] < 0)
-        sell_count = -self.data['SMA_Signal'].clip(upper=0) - self.data['MACD_Signal'].clip(upper=0) - \
-                     -self.data['RSI_Signal'].clip(upper=0) - self.data['BB_Signal'].clip(upper=0)
-        
-        # 매수 신호 설정
-        self.data.loc[(buy_count >= 3) & (buy_signals), 'Signal'] = 1
-        
-        # 매도 신호 설정
-        self.data.loc[(sell_count >= 3) & (sell_signals), 'Signal'] = -1
-        
+        buy_count = (self.data['SMA_Signal'].clip(lower=0) +
+                     self.data['MACD_Signal'].clip(lower=0) +
+                     self.data['RSI_Signal'].clip(lower=0) +
+                     self.data['OBV_Signal'].clip(lower=0))
+        sell_count = (-self.data['SMA_Signal'].clip(upper=0) -
+                      self.data['MACD_Signal'].clip(upper=0) -
+                      self.data['RSI_Signal'].clip(upper=0) -
+                      self.data['OBV_Signal'].clip(upper=0))
+        buy_signals = (buy_count >= 3)
+        sell_signals = (sell_count >= 3)
+        self.data.loc[buy_signals, 'Signal'] = 1
+        self.data.loc[sell_signals, 'Signal'] = -1
+
         # 포지션 유지
         self.data['Position'] = self.data['Signal'].copy()
         self.data['Position'] = self.data['Position'].replace(to_replace=0, value=np.nan).ffill().fillna(0)
-        
         return self.data
-    
+
     def apply_strategy(self, strategy_name='sma_crossover'):
         """선택한 전략을 적용합니다."""
         if strategy_name not in self.strategies:
@@ -332,12 +328,11 @@ class StockAnalyzer:
             ax3.axhline(y=70, color='r', linestyle='--', alpha=0.5)
             ax3.axhline(y=30, color='g', linestyle='--', alpha=0.5)
             ax3.set_ylabel('RSI', fontsize=12)
-        elif strategy_name == 'bollinger':
-            ax3.plot(self.data.index, self.data['BB_Upper'], label='상단 밴드', alpha=0.7)
-            ax3.plot(self.data.index, self.data['BB_Middle'], label='중간 밴드', alpha=0.7)
-            ax3.plot(self.data.index, self.data['BB_Lower'], label='하단 밴드', alpha=0.7)
-            ax3.plot(self.data.index, self.data['Close'], label='종가', alpha=0.7)
-            ax3.set_ylabel('볼린저 밴드', fontsize=12)
+        elif strategy_name == 'obv':
+            ax3.plot(self.data.index, self.data['OBV'], label='OBV', alpha=0.7)
+            if 'OBV_SMA_5' in self.data.columns:
+                ax3.plot(self.data.index, self.data['OBV_SMA_5'], label='OBV 5일 이동평균', alpha=0.7)
+            ax3.set_ylabel('OBV', fontsize=12)
         else:
             ax3.plot(self.data.index, self.data['SMA_5'] - self.data['SMA_10'], label='이동평균선 차이', alpha=0.7)
             ax3.axhline(y=0, color='k', linestyle='--', alpha=0.5)
@@ -402,8 +397,8 @@ def parse_args():
     """명령줄 인자를 파싱합니다."""
     parser = argparse.ArgumentParser(description='주식 거래 결정 시스템')
     
-    parser.add_argument('--ticker', type=str, default='005930.KS',
-                        help='주식 티커 심볼 (기본값: 005930.KS, 삼성전자)')
+    parser.add_argument('--ticker', type=str, default='AAPL',
+                        help='주식 티커 심볼 (기본값: AAPL, Apple Inc.)')
     
     parser.add_argument('--start_date', type=str, default=(datetime.now() - timedelta(days=365)).strftime('%Y-%m-%d'),
                         help='시작 날짜 (기본값: 1년 전)')
@@ -412,7 +407,7 @@ def parse_args():
                         help='종료 날짜 (기본값: 오늘)')
     
     parser.add_argument('--strategy', type=str, default='sma_crossover',
-                        choices=['sma_crossover', 'macd', 'rsi', 'bollinger', 'combined'],
+                        choices=['sma_crossover', 'macd', 'rsi', 'combined', 'obv'],
                         help='거래 전략 (기본값: sma_crossover)')
     
     parser.add_argument('--capital', type=float, default=10000000,
