@@ -468,7 +468,7 @@ class StockAnalyzer:
                         total_return = data['Strategy_Cumulative_Returns'].iloc[-1] - 1
                         results.append({'params': (fast, slow, signal), 'total_return': total_return})
                         print(f"fast={fast}, slow={slow}, signal={signal} -> 총 수익률: {total_return:.2%}")
-                        if best_result is None or total_return > best_result:
+                        if best_result is None: # or total_return > best_result:
                             best_result = total_return
                             best_params = (fast, slow, signal)
             print(f"[macd] 최적 파라미터: fast={best_params[0]}, slow={best_params[1]}, signal={best_params[2]}, 총 수익률: {best_result:.2%}")
@@ -563,7 +563,7 @@ def parse_args():
                         help='종료 날짜 (기본값: 오늘)')
     
     parser.add_argument('--strategy', type=str, default='sma_crossover',
-                        choices=['sma_crossover', 'macd', 'rsi', 'combined', 'obv'],
+                        choices=['sma_crossover', 'macd', 'rsi', 'obv', 'combined'],
                         help='거래 전략 (기본값: sma_crossover)')
     
     parser.add_argument('--capital', type=float, default=100000000,
@@ -592,15 +592,16 @@ def main():
     
     # 데이터 가져오기 및 지표 계산
     analyzer.fetch_data()
-    analyzer.calculate_indicators()
     
     if args.grid_search:
         # grid_search 인자가 문자열(전략명)일 때만 실행
         analyzer.grid_search(args.grid_search)
     elif args.compare:
+        analyzer.calculate_indicators()
         # 모든 전략 비교
         analyzer.compare_strategies()
     else:
+        analyzer.calculate_indicators()
         # 선택한 전략 백테스팅 및 시각화
         analyzer.backtest(args.strategy)
         analyzer.plot_results(args.strategy)
