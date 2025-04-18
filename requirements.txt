@@ -1,0 +1,7 @@
+yfinance
+pandas
+numpy
+matplotlib
+openai
+python-dotenv
+fear-and-greed
