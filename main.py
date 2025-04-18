@@ -6,7 +6,10 @@ from matplotlib.gridspec import GridSpec
 from matplotlib import rc
 import argparse
 from datetime import datetime, timedelta
-
+import openai
+import os
+from dotenv import load_dotenv
+    
 class StockAnalyzer:
     """주식 데이터 분석 및 거래 전략 백테스트 클래스"""
     def __init__(self, ticker, start_date, end_date, initial_capital=100_000_000):
@@ -390,6 +393,78 @@ class StockAnalyzer:
             print("해당 전략은 그리드 서치가 지원되지 않습니다.")
             return None, None
 
+def llm_thinking(analyzer, strategy_name='sma_crossover', max_rows=30, bt_result=None):
+    """
+    OpenAI LLM을 활용해 주식 전략 결과를 요약하고, 전문가 관점의 투자의견/전략추천/리포트를 생성합니다.
+    """
+    load_dotenv(override=True)
+    openai_api_key = os.getenv('OPENAI_API_KEY')
+    if not openai_api_key:
+        print("[경고] OPENAI_API_KEY 환경변수가 설정되어 있지 않습니다.")
+        return None
+    openai.api_key = openai_api_key
+
+    # 최근 max_rows 데이터 요약
+    data = analyzer.data.copy().tail(max_rows)
+    summary = []
+    for idx, row in data.iterrows():
+        # FutureWarning 방지: Series일 경우 .iloc[0] 사용
+        close_val = row['Close']
+        if isinstance(close_val, pd.Series):
+            close_val = close_val.iloc[0]
+        signal_val = row['Signal'] if 'Signal' in row else 0
+        if isinstance(signal_val, pd.Series):
+            signal_val = signal_val.iloc[0]
+        position_val = row['Position'] if 'Position' in row else 0
+        if isinstance(position_val, pd.Series):
+            position_val = position_val.iloc[0]
+        summary.append(
+            f"날짜: {idx.date()} | 종가: {float(close_val):.2f} | 매수/매도 신호: {int(signal_val)} | 전략 포지션: {int(position_val)}"
+        )
+
+    summary_text = '\n'.join(summary)
+    # 전략별 백테스트 주요 결과
+    if bt_result is None:
+        bt_result = analyzer.backtest(strategy_name)
+    result_text = (
+        f"총 거래 횟수: {bt_result['total_trades']}\n"
+        f"전략 총 수익률: {bt_result['total_return']:.2%}\n"
+        f"매수 후 보유 수익률: {bt_result['buy_hold_return']:.2%}\n"
+        f"연간 수익률: {bt_result['annual_return']:.2%}\n"
+        f"최대 낙폭: {bt_result['max_drawdown']:.2%}\n"
+        f"최종 포트폴리오 가치: {bt_result['final_value']:,.0f}원"
+    )
+    # 프롬프트 설계 (주식 트레이딩 전문가 관점)
+    prompt = f"""
+        너는 주식 트레이딩 전문가다. 아래는 {analyzer.ticker} 종목의 최근 전략 결과와 데이터 요약이다.
+
+        [최근 데이터 요약]
+        {summary_text}
+
+        [전략별 백테스트 결과]
+        {result_text}
+
+        아래 3가지를 전문가 관점에서 한국어로 자연스럽게 작성해줘.
+        1. 현재 전략에 대한 투자의견 (매수/매도/관망 등)
+        2. 전략 추천 및 이유
+        3. 데이터와 전략 결과를 바탕으로 한 리포트 (시장 상황, 리스크, 참고사항 등)
+
+        각 항목을 번호로 구분해서 5~10문장 이내로 구체적으로 작성해줘."""
+    # OpenAI API 호출
+    try:
+        completion = openai.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=1000,
+            temperature=0.7,
+            stream=False  # stream 사용하지 않음
+        )
+        result = completion.choices[0].message.content
+        print(f"\n===== LLM 전문가 의견 =====\n{result}")
+    except Exception as e:
+        print(f"[OpenAI API 오류] {e}")
+        return None
+
 def parse_args():
     parser = argparse.ArgumentParser(description='주식 거래 결정 시스템')
     parser.add_argument('--ticker', type=str, default='AAPL', help='주식 티커 심볼 (기본값: AAPL, Apple Inc.)')
@@ -400,14 +475,6 @@ def parse_args():
     parser.add_argument('--compare', action='store_true', help='모든 전략을 비교합니다')
     parser.add_argument('--grid_search', type=str, metavar='STRATEGY', help='전략별 파라미터 그리드 서치를 수행합니다 (예: --grid_search macd)')
     return parser.parse_args()
-
-def llm_thinking():
-    """LLM의 사고 과정"""
-    print("LLM은 주식 거래 결정 시스템을 설계하고 있습니다.")
-    print("주식 데이터를 다운로드하고 기술적 지표를 계산합니다.")
-    print("여러 거래 전략을 구현하고 백테스트를 수행합니다.")
-    print("사용자가 선택한 전략에 따라 결과를 시각화합니다.")
-    print("그리드 서치를 통해 최적의 파라미터를 찾습니다.")
 
 def main():
     args = parse_args()
@@ -425,8 +492,9 @@ def main():
         analyzer.compare_strategies()
     else:
         analyzer.calculate_indicators()
-        analyzer.backtest(args.strategy)
+        bt_result = analyzer.backtest(args.strategy)
         analyzer.plot_results(args.strategy)
+        llm_thinking(analyzer, args.strategy, bt_result=bt_result)
 
 if __name__ == "__main__":
     main()
