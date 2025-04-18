@@ -316,7 +316,7 @@ class StockAnalyzer:
         plt.show()
         return comparison
 
-    def grid_search(self, strategy_name):
+    def grid_search(self, strategy_name, auto_update=True):
         best_result = None
         best_params = None
         results = []
@@ -344,6 +344,10 @@ class StockAnalyzer:
                         best_result = total_return
                         best_params = (short, long)
             print(f"[sma_crossover] 최적 파라미터: short_window={best_params[0]}, long_window={best_params[1]}, 총 수익률: {best_result:.2%}")
+            if auto_update:
+                self.STRATEGY_PARAMS['sma_crossover']['short_window'] = best_params[0]
+                self.STRATEGY_PARAMS['sma_crossover']['long_window'] = best_params[1]
+                print(f"STRATEGY_PARAMS에 최적 파라미터가 자동 반영되었습니다.")
             return best_params, best_result
         elif strategy_name == 'macd' and params:
             for fast in params['fast']:
@@ -371,6 +375,11 @@ class StockAnalyzer:
                             best_result = total_return
                             best_params = (fast, slow, signal)
             print(f"[macd] 최적 파라미터: fast={best_params[0]}, slow={best_params[1]}, signal={best_params[2]}, 총 수익률: {best_result:.2%}")
+            if auto_update:
+                self.STRATEGY_PARAMS['macd']['fast'] = best_params[0]
+                self.STRATEGY_PARAMS['macd']['slow'] = best_params[1]
+                self.STRATEGY_PARAMS['macd']['signal'] = best_params[2]
+                print(f"STRATEGY_PARAMS에 최적 파라미터가 자동 반영되었습니다.")
             return best_params, best_result
         elif strategy_name == 'rsi' and params:
             for window in params['window']:
@@ -401,6 +410,11 @@ class StockAnalyzer:
                             best_result = total_return
                             best_params = (window, buy_th, sell_th)
             print(f"[rsi] 최적 파라미터: window={best_params[0]}, buy_th={best_params[1]}, sell_th={best_params[2]}, 총 수익률: {best_result:.2%}")
+            if auto_update:
+                self.STRATEGY_PARAMS['rsi']['window'] = best_params[0]
+                self.STRATEGY_PARAMS['rsi']['buy_th'] = best_params[1]
+                self.STRATEGY_PARAMS['rsi']['sell_th'] = best_params[2]
+                print(f"STRATEGY_PARAMS에 최적 파라미터가 자동 반영되었습니다.")
             return best_params, best_result
         elif strategy_name == 'obv' and params:
             for obv_window in params['obv_window']:
@@ -432,6 +446,9 @@ class StockAnalyzer:
                     best_result = total_return
                     best_params = (obv_window,)
             print(f"[obv] 최적 파라미터: obv_window={best_params[0]}, 총 수익률: {best_result:.2%}")
+            if auto_update:
+                self.STRATEGY_PARAMS['obv']['obv_window'] = best_params[0]
+                print(f"STRATEGY_PARAMS에 최적 파라미터가 자동 반영되었습니다.")
             return best_params, best_result
         else:
             print("해당 전략은 그리드 서치가 지원되지 않습니다.")
@@ -541,7 +558,30 @@ def parse_args():
     parser.add_argument('--grid_search', type=str, metavar='STRATEGY', help='전략별 파라미터 그리드 서치를 수행합니다 (예: --grid_search macd)')
     return parser.parse_args()
 
+def interactive_cli():
+    print("\n===== 인터랙티브 모드: 주식 거래 결정 시스템 =====")
+    ticker = input("주식 티커 심볼을 입력하세요 (예: AAPL): ") or "AAPL"
+    start_date = input("시작 날짜를 입력하세요 (YYYY-MM-DD, 기본: 5년 전): ") or (datetime.now() - timedelta(days=1825)).strftime('%Y-%m-%d')
+    end_date = input("종료 날짜를 입력하세요 (YYYY-MM-DD, 기본: 오늘): ") or datetime.now().strftime('%Y-%m-%d')
+    capital = input("초기 자본금(원, 기본: 100000000): ") or "100000000"
+    capital = float(capital.replace(',', ''))
+    print("\n전략 목록: 1) sma_crossover  2) macd  3) rsi  4) obv   5) combined")
+    strategy_map = {'1': 'sma_crossover', '2': 'macd', '3': 'rsi', '4': 'obv', '5': 'combined'}
+    strategy_choice = input("전략 번호를 선택하세요 (기본: 1): ") or '1'
+    strategy = strategy_map.get(strategy_choice, 'sma_crossover')
+    analyzer = StockAnalyzer(ticker, start_date, end_date, capital)
+    analyzer.fetch_data()
+    if input("파라미터 그리드서치 실행? (y/n): ").lower() == 'y':
+        analyzer.grid_search(strategy)
+    bt_result = analyzer.backtest(strategy)
+    analyzer.plot_results(strategy)
+    llm_thinking(analyzer, strategy, bt_result=bt_result)
+
 def main():
+    import sys
+    if len(sys.argv) == 1:
+        interactive_cli()
+        return
     args = parse_args()
     print(f"\n===== 주식 거래 결정 시스템 =====")
     print(f"티커: {args.ticker}")
