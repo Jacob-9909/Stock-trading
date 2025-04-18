@@ -9,28 +9,27 @@ from datetime import datetime, timedelta
 import openai
 import os
 from dotenv import load_dotenv
-    
+
 class StockAnalyzer:
     """주식 데이터 분석 및 거래 전략 백테스트 클래스"""
-    # 그리드 서치 파라미터를 한 곳에서 관리
     GRID_SEARCH_PARAMS = {
         'sma_crossover': {
-'short_window': [3, 5, 7, 10],
-'long_window': [10, 15, 20, 30]
-},
+            'short_window': [3, 5, 7, 10],
+            'long_window': [10, 15, 20, 30]
+        },
         'macd': {
-'fast': [5, 8, 12],
-'slow': [10, 17, 26],
-'signal': [5, 9, 12]
-},
+            'fast': [5, 8, 12],
+            'slow': [10, 17, 26],
+            'signal': [5, 9, 12]
+        },
         'rsi': {
-'window': [7, 10, 14, 20],
-'buy_th': [30, 35, 40, 45],
-'sell_th': [55, 60, 65, 70]
-},
+            'window': [7, 10, 14, 20],
+            'buy_th': [30, 35, 40, 45],
+            'sell_th': [55, 60, 65, 70]
+        },
         'obv': {
-'obv_window': [3, 5, 7, 10]
-}
+            'obv_window': [3, 5, 7, 10]
+        }
     }
     STRATEGY_PARAMS = {
         'sma_crossover': {'short_window': 3, 'long_window': 15},
@@ -63,38 +62,6 @@ class StockAnalyzer:
         if verbose:
             print(f"데이터 {len(self.data)}건 다운로드 완료\n{self.data.head()}")
         return self.data
-
-    # def calculate_indicators(self):
-    #         """기술적 지표 계산"""
-    #         self.data['SMA_5'] = self.data['Close'].rolling(window=5).mean()
-    #         self.data['SMA_10'] = self.data['Close'].rolling(window=10).mean()
-    #         self.data['SMA_20'] = self.data['Close'].rolling(window=20).mean()
-    #         self.data['EMA_5'] = self.data['Close'].ewm(span=5, adjust=False).mean()
-    #         self.data['EMA_10'] = self.data['Close'].ewm(span=10, adjust=False).mean()
-    #         self.data['MACD'] = self.data['EMA_10'] - self.data['EMA_5']
-    #         self.data['Signal_Line'] = self.data['MACD'].ewm(span=9, adjust=False).mean()
-    #         self.data['MACD_Histogram'] = self.data['MACD'] - self.data['Signal_Line']
-    #         delta = self.data['Close'].diff()
-    #         gain = delta.where(delta > 0, 0)
-    #         loss = -delta.where(delta < 0, 0)
-    #         avg_gain = gain.rolling(window=14).mean()
-    #         avg_loss = loss.rolling(window=14).mean()
-    #         rs = avg_gain / avg_loss
-    #         self.data['RSI'] = 100 - (100 / (1 + rs))
-    #         self.data['Volume_SMA_5'] = self.data['Volume'].rolling(window=5).mean()
-    #         self.data['OBV'] = 0
-    #         self.data['OBV'] = np.where(
-    #             self.data['Close'] > self.data['Close'].shift(1),
-    #             self.data['Volume'],
-    #             np.where(
-    #                 self.data['Close'] < self.data['Close'].shift(1),
-    #                 -self.data['Volume'],
-    #                 0
-    #             )
-    #         )
-    #         self.data['OBV'] = self.data['OBV'].cumsum()
-    #         self.data = self.data.dropna()
-    #         return self.data
 
     def _sma_crossover_strategy(self, data):
         params = self.STRATEGY_PARAMS['sma_crossover']
@@ -257,35 +224,10 @@ class StockAnalyzer:
         if strategy_params is None:
             strategy_params = self.STRATEGY_PARAMS
         data = self.data.copy()
-        # SMA
-        sma_short = strategy_params['sma_crossover']['short_window']
-        sma_long = strategy_params['sma_crossover']['long_window']
-        data['SMA_5'] = data['Close'].rolling(window=sma_short).mean()
-        data['SMA_10'] = data['Close'].rolling(window=sma_long).mean()
-        # MACD
-        macd_fast = strategy_params['macd']['fast']
-        macd_slow = strategy_params['macd']['slow']
-        macd_signal = strategy_params['macd']['signal']
-        data['EMA_fast'] = data['Close'].ewm(span=macd_fast, adjust=False).mean()
-        data['EMA_slow'] = data['Close'].ewm(span=macd_slow, adjust=False).mean()
-        data['MACD'] = data['EMA_fast'] - data['EMA_slow']
-        data['Signal_Line'] = data['MACD'].ewm(span=macd_signal, adjust=False).mean()
-        data['MACD_Histogram'] = data['MACD'] - data['Signal_Line']
-        # RSI
-        rsi_window = strategy_params['rsi']['window']
-        delta = data['Close'].diff()
-        gain = delta.where(delta > 0, 0)
-        loss = -delta.where(delta < 0, 0)
-        avg_gain = gain.rolling(window=rsi_window).mean()
-        avg_loss = loss.rolling(window=rsi_window).mean()
-        rs = avg_gain / avg_loss
-        data['RSI'] = 100 - (100 / (1 + rs))
-        # OBV
-        obv_window = strategy_params['obv']['obv_window']
-        data['OBV'] = np.where(data['Close'] > data['Close'].shift(1), data['Volume'],
-                              np.where(data['Close'] < data['Close'].shift(1), -data['Volume'], 0))
-        data['OBV'] = data['OBV'].cumsum()
-        data['OBV_SMA_5'] = data['OBV'].rolling(window=obv_window).mean()
+
+        data['SMA_5'] = data['Close'].rolling(window=5).mean()
+        data['SMA_10'] = data['Close'].rolling(window=10).mean()
+
         self.data = data
         rc('font', family='Malgun Gothic')
         plt.rcParams['axes.unicode_minus'] = False
@@ -311,6 +253,7 @@ class StockAnalyzer:
         ax2.grid(True)
         ax3 = plt.subplot(gs[2], sharex=ax1)
         if strategy_name == 'macd':
+            self.data['MACD_Histogram'] = self.data['MACD'] - self.data['Signal_Line']
             ax3.plot(self.data.index, self.data['MACD'], label='MACD', alpha=0.7)
             ax3.plot(self.data.index, self.data['Signal_Line'], label='시그널 라인', alpha=0.7)
             ax3.bar(self.data.index, self.data['MACD_Histogram'], label='MACD 히스토그램', alpha=0.5)
@@ -322,11 +265,11 @@ class StockAnalyzer:
             ax3.set_ylabel('RSI', fontsize=12)
         elif strategy_name == 'obv':
             ax3.plot(self.data.index, self.data['OBV'], label='OBV', alpha=0.7)
-            if 'OBV_SMA_5' in self.data.columns:
-                ax3.plot(self.data.index, self.data['OBV_SMA_5'], label='OBV 5일 이동평균', alpha=0.7)
+            if 'OBV_SMA' in self.data.columns:
+                ax3.plot(self.data.index, self.data['OBV_SMA'], label='OBV 5일 이동평균', alpha=0.7)
             ax3.set_ylabel('OBV', fontsize=12)
         else:
-            ax3.plot(self.data.index, self.data['SMA_5'] - self.data['SMA_10'], label='이동평균선 차이', alpha=0.7)
+            ax3.plot(self.data.index, self.data['SMA_short'] - self.data['SMA_long'], label='이동평균선 차이', alpha=0.7)
             ax3.axhline(y=0, color='k', linestyle='--', alpha=0.5)
             ax3.set_ylabel('이동평균선 차이', fontsize=12)
         ax3.legend(loc='best')
