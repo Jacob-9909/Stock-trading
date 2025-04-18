@@ -401,6 +401,14 @@ def parse_args():
     parser.add_argument('--grid_search', type=str, metavar='STRATEGY', help='전략별 파라미터 그리드 서치를 수행합니다 (예: --grid_search macd)')
     return parser.parse_args()
 
+def llm_thinking():
+    """LLM의 사고 과정"""
+    print("LLM은 주식 거래 결정 시스템을 설계하고 있습니다.")
+    print("주식 데이터를 다운로드하고 기술적 지표를 계산합니다.")
+    print("여러 거래 전략을 구현하고 백테스트를 수행합니다.")
+    print("사용자가 선택한 전략에 따라 결과를 시각화합니다.")
+    print("그리드 서치를 통해 최적의 파라미터를 찾습니다.")
+
 def main():
     args = parse_args()
     print(f"\n===== 주식 거래 결정 시스템 =====")
