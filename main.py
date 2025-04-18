@@ -397,6 +397,9 @@ def llm_thinking(analyzer, strategy_name='sma_crossover', max_rows=30, bt_result
     """
     OpenAI LLM을 활용해 주식 전략 결과를 요약하고, 전문가 관점의 투자의견/전략추천/리포트를 생성합니다.
     """
+    from fear_and_greed import get as get_fng
+    import yfinance as yf
+    import datetime
     load_dotenv(override=True)
     openai_api_key = os.getenv('OPENAI_API_KEY')
     if not openai_api_key:
@@ -404,11 +407,30 @@ def llm_thinking(analyzer, strategy_name='sma_crossover', max_rows=30, bt_result
         return None
     openai.api_key = openai_api_key
 
+    # 탐욕공포지수 데이터 추가
+    try:
+        fng_data = get_fng()
+        fng_text = f"[탐욕공포지수] value: {fng_data.value}, description: {fng_data.description}, last_update: {fng_data.last_update.date()}\n"
+    except Exception as e:
+        fng_text = f"[탐욕공포지수를 가져오는 데 실패했습니다: {e}]\n"
+
+    # VIX 데이터 추가
+    try:
+        vix_ticker = yf.Ticker("^VIX")
+        today = datetime.date.today().strftime('%Y-%m-%d')
+        yesterday = (datetime.date.today() - datetime.timedelta(days=1)).strftime('%Y-%m-%d')
+        vix_data = vix_ticker.history(start=yesterday, end=today)
+        today_vix = vix_data['Close']
+        today_vix.reset_index(drop=True, inplace=True)
+        vix_value = today_vix[0].round(2)
+        vix_text = f"[VIX 변동성지수] value: {vix_value} (기준일: {today})\n"
+    except Exception as e:
+        vix_text = f"[VIX 변동성지수를 가져오는 데 실패했습니다: {e}]\n"
+
     # 최근 max_rows 데이터 요약
     data = analyzer.data.copy().tail(max_rows)
     summary = []
     for idx, row in data.iterrows():
-        # FutureWarning 방지: Series일 경우 .iloc[0] 사용
         close_val = row['Close']
         if isinstance(close_val, pd.Series):
             close_val = close_val.iloc[0]
@@ -436,8 +458,7 @@ def llm_thinking(analyzer, strategy_name='sma_crossover', max_rows=30, bt_result
     )
     # 프롬프트 설계 (주식 트레이딩 전문가 관점)
     prompt = f"""
-        너는 주식 트레이딩 전문가다. 아래는 {analyzer.ticker} 종목의 최근 전략 결과와 데이터 요약이다.
-
+        너는 주식 트레이딩 전문가다. 아래는 {analyzer.ticker} 종목의 최근 전략 결과와 데이터 요약이다.\n\n        {fng_text}{vix_text}
         [최근 데이터 요약]
         {summary_text}
 
@@ -457,7 +478,7 @@ def llm_thinking(analyzer, strategy_name='sma_crossover', max_rows=30, bt_result
             messages=[{"role": "user", "content": prompt}],
             max_tokens=1000,
             temperature=0.7,
-            stream=False  # stream 사용하지 않음
+            stream=False
         )
         result = completion.choices[0].message.content
         print(f"\n===== LLM 전문가 의견 =====\n{result}")
