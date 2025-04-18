@@ -12,6 +12,33 @@ from dotenv import load_dotenv
     
 class StockAnalyzer:
     """주식 데이터 분석 및 거래 전략 백테스트 클래스"""
+    # 그리드 서치 파라미터를 한 곳에서 관리
+    GRID_SEARCH_PARAMS = {
+        'sma_crossover': {
+'short_window': [3, 5, 7, 10],
+'long_window': [10, 15, 20, 30]
+},
+        'macd': {
+'fast': [5, 8, 12],
+'slow': [10, 17, 26],
+'signal': [5, 9, 12]
+},
+        'rsi': {
+'window': [7, 10, 14, 20],
+'buy_th': [30, 35, 40, 45],
+'sell_th': [55, 60, 65, 70]
+},
+        'obv': {
+'obv_window': [3, 5, 7, 10]
+}
+    }
+    STRATEGY_PARAMS = {
+        'sma_crossover': {'short_window': 3, 'long_window': 15},
+        'macd': {'fast': 8, 'slow': 17, 'signal': 12},
+        'rsi': {'window': 14, 'buy_th': 45, 'sell_th': 65},
+        'obv': {'obv_window': 10}
+    }
+
     def __init__(self, ticker, start_date, end_date, initial_capital=100_000_000):
         self.ticker = ticker
         self.start_date = start_date
@@ -37,46 +64,61 @@ class StockAnalyzer:
             print(f"데이터 {len(self.data)}건 다운로드 완료\n{self.data.head()}")
         return self.data
 
-    def calculate_indicators(self):
-        """기술적 지표 계산"""
-        self.data['SMA_5'] = self.data['Close'].rolling(window=5).mean()
-        self.data['SMA_10'] = self.data['Close'].rolling(window=10).mean()
-        self.data['SMA_20'] = self.data['Close'].rolling(window=20).mean()
-        self.data['EMA_5'] = self.data['Close'].ewm(span=5, adjust=False).mean()
-        self.data['EMA_10'] = self.data['Close'].ewm(span=10, adjust=False).mean()
-        self.data['MACD'] = self.data['EMA_10'] - self.data['EMA_5']
-        self.data['Signal_Line'] = self.data['MACD'].ewm(span=9, adjust=False).mean()
-        self.data['MACD_Histogram'] = self.data['MACD'] - self.data['Signal_Line']
-        delta = self.data['Close'].diff()
-        gain = delta.where(delta > 0, 0)
-        loss = -delta.where(delta < 0, 0)
-        avg_gain = gain.rolling(window=14).mean()
-        avg_loss = loss.rolling(window=14).mean()
-        rs = avg_gain / avg_loss
-        self.data['RSI'] = 100 - (100 / (1 + rs))
-        self.data['Volume_SMA_5'] = self.data['Volume'].rolling(window=5).mean()
-        self.data['OBV'] = 0
-        self.data['OBV'] = np.where(
-            self.data['Close'] > self.data['Close'].shift(1),
-            self.data['Volume'],
-            np.where(
-                self.data['Close'] < self.data['Close'].shift(1),
-                -self.data['Volume'],
-                0
-            )
-        )
-        self.data['OBV'] = self.data['OBV'].cumsum()
-        self.data = self.data.dropna()
-        return self.data
+    # def calculate_indicators(self):
+    #         """기술적 지표 계산"""
+    #         self.data['SMA_5'] = self.data['Close'].rolling(window=5).mean()
+    #         self.data['SMA_10'] = self.data['Close'].rolling(window=10).mean()
+    #         self.data['SMA_20'] = self.data['Close'].rolling(window=20).mean()
+    #         self.data['EMA_5'] = self.data['Close'].ewm(span=5, adjust=False).mean()
+    #         self.data['EMA_10'] = self.data['Close'].ewm(span=10, adjust=False).mean()
+    #         self.data['MACD'] = self.data['EMA_10'] - self.data['EMA_5']
+    #         self.data['Signal_Line'] = self.data['MACD'].ewm(span=9, adjust=False).mean()
+    #         self.data['MACD_Histogram'] = self.data['MACD'] - self.data['Signal_Line']
+    #         delta = self.data['Close'].diff()
+    #         gain = delta.where(delta > 0, 0)
+    #         loss = -delta.where(delta < 0, 0)
+    #         avg_gain = gain.rolling(window=14).mean()
+    #         avg_loss = loss.rolling(window=14).mean()
+    #         rs = avg_gain / avg_loss
+    #         self.data['RSI'] = 100 - (100 / (1 + rs))
+    #         self.data['Volume_SMA_5'] = self.data['Volume'].rolling(window=5).mean()
+    #         self.data['OBV'] = 0
+    #         self.data['OBV'] = np.where(
+    #             self.data['Close'] > self.data['Close'].shift(1),
+    #             self.data['Volume'],
+    #             np.where(
+    #                 self.data['Close'] < self.data['Close'].shift(1),
+    #                 -self.data['Volume'],
+    #                 0
+    #             )
+    #         )
+    #         self.data['OBV'] = self.data['OBV'].cumsum()
+    #         self.data = self.data.dropna()
+    #         return self.data
 
     def _sma_crossover_strategy(self, data):
+        params = self.STRATEGY_PARAMS['sma_crossover']
+        short = params['short_window']
+        long = params['long_window']
+
+        data['SMA_short'] = data['Close'].rolling(window=short).mean()
+        data['SMA_long'] = data['Close'].rolling(window=long).mean()
         data['Signal'] = 0
-        data.loc[(data['SMA_5'] > data['SMA_10']) & (data['SMA_5'].shift(1) <= data['SMA_10'].shift(1)), 'Signal'] = 1
-        data.loc[(data['SMA_5'] < data['SMA_10']) & (data['SMA_5'].shift(1) >= data['SMA_10'].shift(1)), 'Signal'] = -1
+        data.loc[(data['SMA_short'] > data['SMA_long']) & (data['SMA_short'].shift(1) <= data['SMA_long'].shift(1)), 'Signal'] = 1
+        data.loc[(data['SMA_short'] < data['SMA_long']) & (data['SMA_short'].shift(1) >= data['SMA_long'].shift(1)), 'Signal'] = -1
         data['Position'] = data['Signal'].replace(to_replace=0, value=np.nan).ffill().fillna(0)
         return data
 
     def _macd_strategy(self, data):
+        params = self.STRATEGY_PARAMS['macd']
+        fast = params['fast']
+        slow = params['slow']
+        signal = params['signal']
+
+        data['EMA_fast'] = data['Close'].ewm(span=fast, adjust=False).mean()
+        data['EMA_slow'] = data['Close'].ewm(span=slow, adjust=False).mean()
+        data['MACD'] = data['EMA_fast'] - data['EMA_slow']
+        data['Signal_Line'] = data['MACD'].ewm(span=signal, adjust=False).mean()
         data['Signal'] = 0
         data.loc[(data['MACD'] > data['Signal_Line']) & (data['MACD'].shift(1) <= data['Signal_Line'].shift(1)), 'Signal'] = 1
         data.loc[(data['MACD'] < data['Signal_Line']) & (data['MACD'].shift(1) >= data['Signal_Line'].shift(1)), 'Signal'] = -1
@@ -84,40 +126,84 @@ class StockAnalyzer:
         return data
 
     def _rsi_strategy(self, data):
+        params = self.STRATEGY_PARAMS['rsi']
+        window = params['window']
+        buy_th = params['buy_th']
+        sell_th = params['sell_th']
+
+        delta = data['Close'].diff()
+        gain = delta.where(delta > 0, 0)
+        loss = -delta.where(delta < 0, 0)
+        avg_gain = gain.rolling(window=window).mean()
+        avg_loss = loss.rolling(window=window).mean()
+        rs = avg_gain / avg_loss
+        data['RSI'] = 100 - (100 / (1 + rs))
         data['Signal'] = 0
-        data.loc[(data['RSI'] > 40) & (data['RSI'].shift(1) <= 40), 'Signal'] = 1
-        data.loc[(data['RSI'] < 60) & (data['RSI'].shift(1) >= 60), 'Signal'] = -1
+        data.loc[(data['RSI'] > buy_th) & (data['RSI'].shift(1) <= buy_th), 'Signal'] = 1
+        data.loc[(data['RSI'] < sell_th) & (data['RSI'].shift(1) >= sell_th), 'Signal'] = -1
         data['Position'] = data['Signal'].replace(to_replace=0, value=np.nan).ffill().fillna(0)
         return data
 
     def _obv_strategy(self, data):
+        params = self.STRATEGY_PARAMS['obv']
+        obv_window = params['obv_window']
+
+        data['OBV'] = 0
+        data['OBV'] = np.where(data['Close'] > data['Close'].shift(1), data['Volume'], np.where(data['Close'] < data['Close'].shift(1), -data['Volume'], 0))
+        data['OBV'] = data['OBV'].cumsum()
+        data['OBV_SMA'] = data['OBV'].rolling(window=obv_window).mean()
         data['Signal'] = 0
-        data['OBV_SMA_5'] = data['OBV'].rolling(window=5).mean()
-        data.loc[(data['OBV'] > data['OBV_SMA_5']) & (data['OBV'].shift(1) <= data['OBV_SMA_5'].shift(1)), 'Signal'] = 1
-        data.loc[(data['OBV'] < data['OBV_SMA_5']) & (data['OBV'].shift(1) >= data['OBV_SMA_5'].shift(1)), 'Signal'] = -1
+        data.loc[(data['OBV'] > data['OBV_SMA']) & (data['OBV'].shift(1) <= data['OBV_SMA'].shift(1)), 'Signal'] = 1
+        data.loc[(data['OBV'] < data['OBV_SMA']) & (data['OBV'].shift(1) >= data['OBV_SMA'].shift(1)), 'Signal'] = -1
         data['Position'] = data['Signal'].replace(to_replace=0, value=np.nan).ffill().fillna(0)
         return data
 
-    def _combined_strategy(self, data):
-        data['Signal'] = 0
-        sma_data = data.copy()
-        sma_data.loc[(sma_data['SMA_5'] > sma_data['SMA_10']) & (sma_data['SMA_5'].shift(1) <= sma_data['SMA_10'].shift(1)), 'Signal'] = 1
-        sma_data.loc[(sma_data['SMA_5'] < sma_data['SMA_10']) & (sma_data['SMA_5'].shift(1) >= sma_data['SMA_10'].shift(1)), 'Signal'] = -1
-        data['SMA_Signal'] = sma_data['Signal']
-        macd_data = data.copy()
-        macd_data.loc[(macd_data['MACD'] > macd_data['Signal_Line']) & (macd_data['MACD'].shift() <= macd_data['Signal_Line'].shift()), 'Signal'] = 1
-        macd_data.loc[(macd_data['MACD'] < macd_data['Signal_Line']) & (macd_data['MACD'].shift() >= macd_data['Signal_Line'].shift()), 'Signal'] = -1
-        data['MACD_Signal'] = macd_data['Signal']
-        rsi_data = data.copy()
-        rsi_data.loc[(rsi_data['RSI'] > 40) & (rsi_data['RSI'].shift(1) <= 40), 'Signal'] = 1
-        rsi_data.loc[(rsi_data['RSI'] < 60) & (rsi_data['RSI'].shift(1) >= 60), 'Signal'] = -1
-        data['RSI_Signal'] = rsi_data['Signal']
-        obv_data = data.copy()
-        obv_data['OBV_SMA_5'] = obv_data['OBV'].rolling(window=5).mean()
-        obv_data['OBV_Signal'] = 0
-        obv_data.loc[(obv_data['OBV'] > obv_data['OBV_SMA_5']) & (obv_data['OBV'].shift(1) <= obv_data['OBV_SMA_5'].shift(1)), 'OBV_Signal'] = 1
-        obv_data.loc[(obv_data['OBV'] < obv_data['OBV_SMA_5']) & (obv_data['OBV'].shift(1) >= obv_data['OBV_SMA_5'].shift(1)), 'OBV_Signal'] = -1
-        data['OBV_Signal'] = obv_data['OBV_Signal']
+    def _combined_strategy(self, data, strategy_params=None):
+        # strategy_params에서 각 전략별 파라미터 추출
+        if strategy_params is None:
+            strategy_params = self.STRATEGY_PARAMS
+        # SMA
+        sma_short = strategy_params['sma_crossover']['short_window']
+        sma_long = strategy_params['sma_crossover']['long_window']
+        data['SMA_short'] = data['Close'].rolling(window=sma_short).mean()
+        data['SMA_long'] = data['Close'].rolling(window=sma_long).mean()
+        data['SMA_Signal'] = 0
+        data.loc[(data['SMA_short'] > data['SMA_long']) & (data['SMA_short'].shift(1) <= data['SMA_long'].shift(1)), 'SMA_Signal'] = 1
+        data.loc[(data['SMA_short'] < data['SMA_long']) & (data['SMA_short'].shift(1) >= data['SMA_long'].shift(1)), 'SMA_Signal'] = -1
+        # MACD
+        macd_fast = strategy_params['macd']['fast']
+        macd_slow = strategy_params['macd']['slow']
+        macd_signal = strategy_params['macd']['signal']
+        data['EMA_fast'] = data['Close'].ewm(span=macd_fast, adjust=False).mean()
+        data['EMA_slow'] = data['Close'].ewm(span=macd_slow, adjust=False).mean()
+        data['MACD'] = data['EMA_fast'] - data['EMA_slow']
+        data['Signal_Line'] = data['MACD'].ewm(span=macd_signal, adjust=False).mean()
+        data['MACD_Signal'] = 0
+        data.loc[(data['MACD'] > data['Signal_Line']) & (data['MACD'].shift(1) <= data['Signal_Line'].shift(1)), 'MACD_Signal'] = 1
+        data.loc[(data['MACD'] < data['Signal_Line']) & (data['MACD'].shift(1) >= data['Signal_Line'].shift(1)), 'MACD_Signal'] = -1
+        # RSI
+        rsi_window = strategy_params['rsi']['window']
+        rsi_buy = strategy_params['rsi']['buy_th']
+        rsi_sell = strategy_params['rsi']['sell_th']
+        delta = data['Close'].diff()
+        gain = delta.where(delta > 0, 0)
+        loss = -delta.where(delta < 0, 0)
+        avg_gain = gain.rolling(window=rsi_window).mean()
+        avg_loss = loss.rolling(window=rsi_window).mean()
+        rs = avg_gain / avg_loss
+        data['RSI'] = 100 - (100 / (1 + rs))
+        data['RSI_Signal'] = 0
+        data.loc[(data['RSI'] > rsi_buy) & (data['RSI'].shift(1) <= rsi_buy), 'RSI_Signal'] = 1
+        data.loc[(data['RSI'] < rsi_sell) & (data['RSI'].shift(1) >= rsi_sell), 'RSI_Signal'] = -1
+        # OBV
+        obv_window = strategy_params['obv']['obv_window']
+        data['OBV'] = np.where(data['Close'] > data['Close'].shift(1), data['Volume'],np.where(data['Close'] < data['Close'].shift(1), -data['Volume'], 0))
+        data['OBV'] = data['OBV'].cumsum()
+        data['OBV_SMA'] = data['OBV'].rolling(window=obv_window).mean()
+        data['OBV_Signal'] = 0
+        data.loc[(data['OBV'] > data['OBV_SMA']) & (data['OBV'].shift(1) <= data['OBV_SMA'].shift(1)), 'OBV_Signal'] = 1
+        data.loc[(data['OBV'] < data['OBV_SMA']) & (data['OBV'].shift(1) >= data['OBV_SMA'].shift(1)), 'OBV_Signal'] = -1
+        # 신호 집계
         data['Signal'] = 0
         buy_count = (data['SMA_Signal'].clip(lower=0) + data['MACD_Signal'].clip(lower=0) + data['RSI_Signal'].clip(lower=0) + data['OBV_Signal'].clip(lower=0))
         sell_count = (-data['SMA_Signal'].clip(upper=0) - data['MACD_Signal'].clip(upper=0) - data['RSI_Signal'].clip(upper=0) - data['OBV_Signal'].clip(upper=0))
@@ -166,9 +252,41 @@ class StockAnalyzer:
             'final_value': data['Portfolio_Value'].iloc[-1]
         }
 
-    def plot_results(self, strategy_name='sma_crossover'):
-        if 'Strategy_Cumulative_Returns' not in self.data.columns:
-            self.backtest(strategy_name)
+    def plot_results(self, strategy_name='sma_crossover', strategy_params=None):
+        # strategy_params가 있으면 해당 파라미터로 지표 계산
+        if strategy_params is None:
+            strategy_params = self.STRATEGY_PARAMS
+        data = self.data.copy()
+        # SMA
+        sma_short = strategy_params['sma_crossover']['short_window']
+        sma_long = strategy_params['sma_crossover']['long_window']
+        data['SMA_5'] = data['Close'].rolling(window=sma_short).mean()
+        data['SMA_10'] = data['Close'].rolling(window=sma_long).mean()
+        # MACD
+        macd_fast = strategy_params['macd']['fast']
+        macd_slow = strategy_params['macd']['slow']
+        macd_signal = strategy_params['macd']['signal']
+        data['EMA_fast'] = data['Close'].ewm(span=macd_fast, adjust=False).mean()
+        data['EMA_slow'] = data['Close'].ewm(span=macd_slow, adjust=False).mean()
+        data['MACD'] = data['EMA_fast'] - data['EMA_slow']
+        data['Signal_Line'] = data['MACD'].ewm(span=macd_signal, adjust=False).mean()
+        data['MACD_Histogram'] = data['MACD'] - data['Signal_Line']
+        # RSI
+        rsi_window = strategy_params['rsi']['window']
+        delta = data['Close'].diff()
+        gain = delta.where(delta > 0, 0)
+        loss = -delta.where(delta < 0, 0)
+        avg_gain = gain.rolling(window=rsi_window).mean()
+        avg_loss = loss.rolling(window=rsi_window).mean()
+        rs = avg_gain / avg_loss
+        data['RSI'] = 100 - (100 / (1 + rs))
+        # OBV
+        obv_window = strategy_params['obv']['obv_window']
+        data['OBV'] = np.where(data['Close'] > data['Close'].shift(1), data['Volume'],
+                              np.where(data['Close'] < data['Close'].shift(1), -data['Volume'], 0))
+        data['OBV'] = data['OBV'].cumsum()
+        data['OBV_SMA_5'] = data['OBV'].rolling(window=obv_window).mean()
+        self.data = data
         rc('font', family='Malgun Gothic')
         plt.rcParams['axes.unicode_minus'] = False
         fig = plt.figure(figsize=(15, 12))
@@ -230,7 +348,6 @@ class StockAnalyzer:
             print(f"\n{strategy_name} 전략 백테스팅 중...")
             analyzer = StockAnalyzer(self.ticker, self.start_date, self.end_date, self.initial_capital)
             analyzer.fetch_data(verbose=False)
-            analyzer.calculate_indicators()
             results[strategy_name] = analyzer.backtest(strategy_name)
             comparison_data[strategy_name] = analyzer.data['Strategy_Cumulative_Returns']
         comparison = pd.DataFrame(results).T
@@ -260,13 +377,10 @@ class StockAnalyzer:
         best_result = None
         best_params = None
         results = []
-        if strategy_name == 'sma_crossover':
-            param_grid = {
-                'short_window': [3, 5, 7, 10],
-                'long_window': [10, 15, 20, 30]
-            }
-            for short in param_grid['short_window']:
-                for long in param_grid['long_window']:
+        params = self.GRID_SEARCH_PARAMS.get(strategy_name)
+        if strategy_name == 'sma_crossover' and params:
+            for short in params['short_window']:
+                for long in params['long_window']:
                     if short >= long:
                         continue
                     data = self.data.copy()
@@ -288,17 +402,12 @@ class StockAnalyzer:
                         best_params = (short, long)
             print(f"[sma_crossover] 최적 파라미터: short_window={best_params[0]}, long_window={best_params[1]}, 총 수익률: {best_result:.2%}")
             return best_params, best_result
-        elif strategy_name == 'macd':
-            param_grid = {
-                'fast': [5, 8, 12],
-                'slow': [10, 17, 26],
-                'signal': [5, 9, 12]
-            }
-            for fast in param_grid['fast']:
-                for slow in param_grid['slow']:
+        elif strategy_name == 'macd' and params:
+            for fast in params['fast']:
+                for slow in params['slow']:
                     if fast >= slow:
                         continue
-                    for signal in param_grid['signal']:
+                    for signal in params['signal']:
                         data = self.data.copy()
                         data['EMA_fast'] = data['Close'].ewm(span=fast, adjust=False).mean()
                         data['EMA_slow'] = data['Close'].ewm(span=slow, adjust=False).mean()
@@ -320,15 +429,10 @@ class StockAnalyzer:
                             best_params = (fast, slow, signal)
             print(f"[macd] 최적 파라미터: fast={best_params[0]}, slow={best_params[1]}, signal={best_params[2]}, 총 수익률: {best_result:.2%}")
             return best_params, best_result
-        elif strategy_name == 'rsi':
-            param_grid = {
-                'window': [7, 10, 14, 20],
-                'buy_th': [30, 35, 40, 45],
-                'sell_th': [55, 60, 65, 70]
-            }
-            for window in param_grid['window']:
-                for buy_th in param_grid['buy_th']:
-                    for sell_th in param_grid['sell_th']:
+        elif strategy_name == 'rsi' and params:
+            for window in params['window']:
+                for buy_th in params['buy_th']:
+                    for sell_th in params['sell_th']:
                         if buy_th >= sell_th:
                             continue
                         data = self.data.copy()
@@ -355,11 +459,8 @@ class StockAnalyzer:
                             best_params = (window, buy_th, sell_th)
             print(f"[rsi] 최적 파라미터: window={best_params[0]}, buy_th={best_params[1]}, sell_th={best_params[2]}, 총 수익률: {best_result:.2%}")
             return best_params, best_result
-        elif strategy_name == 'obv':
-            param_grid = {
-                'obv_window': [3, 5, 7, 10]
-            }
-            for obv_window in param_grid['obv_window']:
+        elif strategy_name == 'obv' and params:
+            for obv_window in params['obv_window']:
                 data = self.data.copy()
                 data['OBV'] = 0
                 data['OBV'] = np.where(
@@ -509,10 +610,8 @@ def main():
     if args.grid_search:
         analyzer.grid_search(args.grid_search)
     elif args.compare:
-        analyzer.calculate_indicators()
         analyzer.compare_strategies()
     else:
-        analyzer.calculate_indicators()
         bt_result = analyzer.backtest(args.strategy)
         analyzer.plot_results(args.strategy)
         llm_thinking(analyzer, args.strategy, bt_result=bt_result)
