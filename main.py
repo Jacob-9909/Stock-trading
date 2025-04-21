@@ -9,6 +9,8 @@ from datetime import datetime, timedelta
 import openai
 import os
 from dotenv import load_dotenv
+import warnings
+warnings.simplefilter(action='ignore', category=FutureWarning)
 
 class StockAnalyzer:
     """주식 데이터 분석 및 거래 전략 백테스트 클래스"""
@@ -56,44 +58,48 @@ class StockAnalyzer:
         """주식 데이터를 yfinance로 다운로드"""
         if verbose:
             print(f"{self.ticker} 데이터 다운로드 중...")
-        self.data = yf.download(self.ticker, start=self.start_date, end=self.end_date, auto_adjust=False)
+        self.data = yf.download(self.ticker, start=self.start_date, end=self.end_date, auto_adjust=False, progress=False)
         if self.data.empty:
             raise ValueError(f"{self.ticker}에 대한 데이터를 가져올 수 없습니다.")
-        if verbose:
-            print(f"데이터 {len(self.data)}건 다운로드 완료\n{self.data.head()}")
+        # 멀티 인덱스가 있다면 제거
+        if isinstance(self.data.columns, pd.MultiIndex):
+            # 첫 번째 레벨(Price, Adj Close 등)만 유지
+            self.data.columns = self.data.columns.get_level_values(0)        
         return self.data
 
     def _sma_crossover_strategy(self, data):
-        params = self.STRATEGY_PARAMS['sma_crossover']
+        params = StockAnalyzer.STRATEGY_PARAMS['sma_crossover']
         short = params['short_window']
         long = params['long_window']
 
         data['SMA_short'] = data['Close'].rolling(window=short).mean()
         data['SMA_long'] = data['Close'].rolling(window=long).mean()
         data['Signal'] = 0
-        data.loc[(data['SMA_short'] > data['SMA_long']) & (data['SMA_short'].shift(1) <= data['SMA_long'].shift(1)), 'Signal'] = 1
-        data.loc[(data['SMA_short'] < data['SMA_long']) & (data['SMA_short'].shift(1) >= data['SMA_long'].shift(1)), 'Signal'] = -1
+        data.loc[(data['SMA_short'] > data['SMA_long']) & (data['SMA_short'].shift(1) <= data['SMA_long'].shift(1)), 'Signal'] = 1 # 매수 신호
+        data.loc[(data['SMA_short'] < data['SMA_long']) & (data['SMA_short'].shift(1) >= data['SMA_long'].shift(1)), 'Signal'] = -1 # 매도 신호
         data['Position'] = data['Signal'].replace(to_replace=0, value=np.nan).ffill().fillna(0)
+        
         return data
 
     def _macd_strategy(self, data):
-        params = self.STRATEGY_PARAMS['macd']
+        params = StockAnalyzer.STRATEGY_PARAMS['macd']
         fast = params['fast']
         slow = params['slow']
         signal = params['signal']
 
-        data['EMA_fast'] = data['Close'].ewm(span=fast, adjust=False).mean()
-        data['EMA_slow'] = data['Close'].ewm(span=slow, adjust=False).mean()
+        data['EMA_fast'] = data['Close'].ewm(span=fast, adjust=False).mean() # 빠른 지수 이동 평균
+        data['EMA_slow'] = data['Close'].ewm(span=slow, adjust=False).mean() # 느린 지수 이동 평균
         data['MACD'] = data['EMA_fast'] - data['EMA_slow']
         data['Signal_Line'] = data['MACD'].ewm(span=signal, adjust=False).mean()
         data['Signal'] = 0
         data.loc[(data['MACD'] > data['Signal_Line']) & (data['MACD'].shift(1) <= data['Signal_Line'].shift(1)), 'Signal'] = 1
         data.loc[(data['MACD'] < data['Signal_Line']) & (data['MACD'].shift(1) >= data['Signal_Line'].shift(1)), 'Signal'] = -1
         data['Position'] = data['Signal'].replace(to_replace=0, value=np.nan).ffill().fillna(0)
+        
         return data
 
     def _rsi_strategy(self, data):
-        params = self.STRATEGY_PARAMS['rsi']
+        params = StockAnalyzer.STRATEGY_PARAMS['rsi']
         window = params['window']
         buy_th = params['buy_th']
         sell_th = params['sell_th']
@@ -109,10 +115,11 @@ class StockAnalyzer:
         data.loc[(data['RSI'] > buy_th) & (data['RSI'].shift(1) <= buy_th), 'Signal'] = 1
         data.loc[(data['RSI'] < sell_th) & (data['RSI'].shift(1) >= sell_th), 'Signal'] = -1
         data['Position'] = data['Signal'].replace(to_replace=0, value=np.nan).ffill().fillna(0)
+
         return data
 
     def _obv_strategy(self, data):
-        params = self.STRATEGY_PARAMS['obv']
+        params = StockAnalyzer.STRATEGY_PARAMS['obv']
         obv_window = params['obv_window']
 
         data['OBV'] = 0
@@ -123,12 +130,13 @@ class StockAnalyzer:
         data.loc[(data['OBV'] > data['OBV_SMA']) & (data['OBV'].shift(1) <= data['OBV_SMA'].shift(1)), 'Signal'] = 1
         data.loc[(data['OBV'] < data['OBV_SMA']) & (data['OBV'].shift(1) >= data['OBV_SMA'].shift(1)), 'Signal'] = -1
         data['Position'] = data['Signal'].replace(to_replace=0, value=np.nan).ffill().fillna(0)
+
         return data
 
     def _combined_strategy(self, data, strategy_params=None):
         # strategy_params에서 각 전략별 파라미터 추출
         if strategy_params is None:
-            strategy_params = self.STRATEGY_PARAMS
+            strategy_params = StockAnalyzer.STRATEGY_PARAMS
         # SMA
         sma_short = strategy_params['sma_crossover']['short_window']
         sma_long = strategy_params['sma_crossover']['long_window']
@@ -179,29 +187,70 @@ class StockAnalyzer:
         data.loc[buy_signals, 'Signal'] = 1
         data.loc[sell_signals, 'Signal'] = -1
         data['Position'] = data['Signal'].replace(to_replace=0, value=np.nan).ffill().fillna(0)
+
+        return data
+
+    def _simulate_trading(self, data):
+        data['Cash'] = self.initial_capital
+        data['Shares'] = 0
+        data['Portfolio_Value'] = self.initial_capital
+
+        for i in range(1, len(data)):
+            data.loc[data.index[i],'Cash'] = float(data.loc[data.index[i-1],'Cash'])
+            data.loc[data.index[i],'Shares'] = data.loc[data.index[i-1],'Shares']
+
+            if data['Position'].iloc[i] == 1 and data['Position'].iloc[i-1] <= 0:
+                available_cash = data.loc[data.index[i-1],'Cash']
+                price = data.loc[data.index[i],'Close']
+                shares_to_buy = int(available_cash // price)
+                if shares_to_buy > 0:
+                    cost = shares_to_buy * price
+                    data.loc[data.index[i],'Cash'] -= cost
+                    data.loc[data.index[i],'Shares'] += shares_to_buy
+
+            elif data['Position'].iloc[i] == -1 and data['Position'].iloc[i-1] >= 0:            
+                shares_to_sell = data.loc[data.index[i-1],'Shares']
+                price = data.loc[data.index[i],'Close']
+                if shares_to_sell > 0:
+                    revenue = shares_to_sell * price
+                    data.loc[data.index[i],'Cash'] += revenue
+                    data.loc[data.index[i],'Shares'] -= shares_to_sell
+            else:
+                data.loc[data.index[i],'Cash'] = float(data.loc[data.index[i-1],'Cash'])
+                data.loc[data.index[i],'Shares'] = data.loc[data.index[i-1],'Shares']
+
+            data.loc[data.index[i], 'Portfolio_Value'] = float(data.loc[data.index[i], 'Cash'] + (data.loc[data.index[i], 'Shares'] * data.loc[data.index[i], 'Close']))
         return data
 
     def backtest(self, strategy_name='sma_crossover'):
         if self.data is None or self.data.empty:
             raise ValueError(f"{self.ticker}에 대한 데이터가 비어있습니다.")
+        
         data = self.data.copy()
         strategy_func = self.strategies[strategy_name]
         data = strategy_func(data)
+
+        data = self._simulate_trading(data)
+        
         data['Returns'] = data['Close'].pct_change()
-        data['Strategy_Returns'] = data['Position'].shift(1) * data['Returns']
-        data['Strategy_Returns'] = data['Strategy_Returns'].fillna(0)
         data['Cumulative_Returns'] = (1 + data['Returns']).cumprod()
-        data['Strategy_Cumulative_Returns'] = (1 + data['Strategy_Returns']).cumprod()
-        data['Portfolio_Value'] = self.initial_capital * data['Strategy_Cumulative_Returns']
+
+        data['Strategy_Returns'] = data['Portfolio_Value'].pct_change()
+        data['Strategy_Cumulative_Returns'] = data['Portfolio_Value'] / self.initial_capital
+
         data['Trades'] = data['Signal'].abs()
         total_trades = data['Trades'].sum()
+
         total_return = data['Strategy_Cumulative_Returns'].iloc[-1] - 1
         buy_hold_return = data['Cumulative_Returns'].iloc[-1] - 1
+
         days = (data.index[-1] - data.index[0]).days
         annual_return = ((1 + total_return) ** (365 / days)) - 1 if days > 0 else 0
+        
         rolling_max = data['Strategy_Cumulative_Returns'].cummax()
         drawdown = (data['Strategy_Cumulative_Returns'] / rolling_max) - 1
         max_drawdown = drawdown.min()
+        
         print(f"\n===== {strategy_name} 전략 백테스팅 결과 =====")
         print(f"총 거래 횟수: {total_trades}")
         print(f"전략 총 수익률: {total_return:.2%}")
@@ -219,10 +268,11 @@ class StockAnalyzer:
             'final_value': data['Portfolio_Value'].iloc[-1]
         }
 
+
     def plot_results(self, strategy_name='sma_crossover', strategy_params=None):
         # strategy_params가 있으면 해당 파라미터로 지표 계산
         if strategy_params is None:
-            strategy_params = self.STRATEGY_PARAMS
+            strategy_params = StockAnalyzer.STRATEGY_PARAMS
         data = self.data.copy()
 
         data['SMA_5'] = data['Close'].rolling(window=5).mean()
@@ -320,7 +370,7 @@ class StockAnalyzer:
         best_result = None
         best_params = None
         results = []
-        params = self.GRID_SEARCH_PARAMS.get(strategy_name)
+        params = StockAnalyzer.GRID_SEARCH_PARAMS.get(strategy_name)
         if strategy_name == 'sma_crossover' and params:
             for short in params['short_window']:
                 for long in params['long_window']:
@@ -333,10 +383,11 @@ class StockAnalyzer:
                     data.loc[(data['SMA_short'] > data['SMA_long']) & (data['SMA_short'].shift(1) <= data['SMA_long'].shift(1)), 'Signal'] = 1
                     data.loc[(data['SMA_short'] < data['SMA_long']) & (data['SMA_short'].shift(1) >= data['SMA_long'].shift(1)), 'Signal'] = -1
                     data['Position'] = data['Signal'].replace(to_replace=0, value=np.nan).ffill().fillna(0)
+                    
+                    data = self._simulate_trading(data) 
                     data['Returns'] = data['Close'].pct_change()
-                    data['Strategy_Returns'] = data['Position'].shift(1) * data['Returns']
-                    data['Strategy_Returns'] = data['Strategy_Returns'].fillna(0)
-                    data['Strategy_Cumulative_Returns'] = (1 + data['Strategy_Returns']).cumprod()
+                    data['Strategy_Returns'] = data['Portfolio_Value'].pct_change()
+                    data['Strategy_Cumulative_Returns'] = data['Portfolio_Value'] / self.initial_capital
                     total_return = data['Strategy_Cumulative_Returns'].iloc[-1] - 1
                     results.append({'params': (short, long), 'total_return': total_return})
                     print(f"short_window={short}, long_window={long} -> 총 수익률: {total_return:.2%}")
@@ -345,8 +396,8 @@ class StockAnalyzer:
                         best_params = (short, long)
             print(f"[sma_crossover] 최적 파라미터: short_window={best_params[0]}, long_window={best_params[1]}, 총 수익률: {best_result:.2%}")
             if auto_update:
-                self.STRATEGY_PARAMS['sma_crossover']['short_window'] = best_params[0]
-                self.STRATEGY_PARAMS['sma_crossover']['long_window'] = best_params[1]
+                StockAnalyzer.STRATEGY_PARAMS['sma_crossover']['short_window'] = best_params[0]
+                StockAnalyzer.STRATEGY_PARAMS['sma_crossover']['long_window'] = best_params[1]
                 print(f"STRATEGY_PARAMS에 최적 파라미터가 자동 반영되었습니다.")
             return best_params, best_result
         elif strategy_name == 'macd' and params:
@@ -364,10 +415,11 @@ class StockAnalyzer:
                         data.loc[(data['MACD'] > data['Signal_Line']) & (data['MACD'].shift(1) <= data['Signal_Line'].shift(1)), 'Signal'] = 1
                         data.loc[(data['MACD'] < data['Signal_Line']) & (data['MACD'].shift(1) >= data['Signal_Line'].shift(1)), 'Signal'] = -1
                         data['Position'] = data['Signal'].replace(to_replace=0, value=np.nan).ffill().fillna(0)
+
+                        data = self._simulate_trading(data) 
                         data['Returns'] = data['Close'].pct_change()
-                        data['Strategy_Returns'] = data['Position'].shift(1) * data['Returns']
-                        data['Strategy_Returns'] = data['Strategy_Returns'].fillna(0)
-                        data['Strategy_Cumulative_Returns'] = (1 + data['Strategy_Returns']).cumprod()
+                        data['Strategy_Returns'] = data['Portfolio_Value'].pct_change()
+                        data['Strategy_Cumulative_Returns'] = data['Portfolio_Value'] / self.initial_capital
                         total_return = data['Strategy_Cumulative_Returns'].iloc[-1] - 1
                         results.append({'params': (fast, slow, signal), 'total_return': total_return})
                         print(f"fast={fast}, slow={slow}, signal={signal} -> 총 수익률: {total_return:.2%}")
@@ -376,9 +428,9 @@ class StockAnalyzer:
                             best_params = (fast, slow, signal)
             print(f"[macd] 최적 파라미터: fast={best_params[0]}, slow={best_params[1]}, signal={best_params[2]}, 총 수익률: {best_result:.2%}")
             if auto_update:
-                self.STRATEGY_PARAMS['macd']['fast'] = best_params[0]
-                self.STRATEGY_PARAMS['macd']['slow'] = best_params[1]
-                self.STRATEGY_PARAMS['macd']['signal'] = best_params[2]
+                StockAnalyzer.STRATEGY_PARAMS['macd']['fast'] = best_params[0]
+                StockAnalyzer.STRATEGY_PARAMS['macd']['slow'] = best_params[1]
+                StockAnalyzer.STRATEGY_PARAMS['macd']['signal'] = best_params[2]
                 print(f"STRATEGY_PARAMS에 최적 파라미터가 자동 반영되었습니다.")
             return best_params, best_result
         elif strategy_name == 'rsi' and params:
@@ -399,10 +451,11 @@ class StockAnalyzer:
                         data.loc[(data['RSI'] > buy_th) & (data['RSI'].shift(1) <= buy_th), 'Signal'] = 1
                         data.loc[(data['RSI'] < sell_th) & (data['RSI'].shift(1) >= sell_th), 'Signal'] = -1
                         data['Position'] = data['Signal'].replace(to_replace=0, value=np.nan).ffill().fillna(0)
+
+                        data = self._simulate_trading(data) 
                         data['Returns'] = data['Close'].pct_change()
-                        data['Strategy_Returns'] = data['Position'].shift(1) * data['Returns']
-                        data['Strategy_Returns'] = data['Strategy_Returns'].fillna(0)
-                        data['Strategy_Cumulative_Returns'] = (1 + data['Strategy_Returns']).cumprod()
+                        data['Strategy_Returns'] = data['Portfolio_Value'].pct_change()
+                        data['Strategy_Cumulative_Returns'] = data['Portfolio_Value'] / self.initial_capital
                         total_return = data['Strategy_Cumulative_Returns'].iloc[-1] - 1
                         results.append({'params': (window, buy_th, sell_th), 'total_return': total_return})
                         print(f"window={window}, buy_th={buy_th}, sell_th={sell_th} -> 총 수익률: {total_return:.2%}")
@@ -411,9 +464,9 @@ class StockAnalyzer:
                             best_params = (window, buy_th, sell_th)
             print(f"[rsi] 최적 파라미터: window={best_params[0]}, buy_th={best_params[1]}, sell_th={best_params[2]}, 총 수익률: {best_result:.2%}")
             if auto_update:
-                self.STRATEGY_PARAMS['rsi']['window'] = best_params[0]
-                self.STRATEGY_PARAMS['rsi']['buy_th'] = best_params[1]
-                self.STRATEGY_PARAMS['rsi']['sell_th'] = best_params[2]
+                StockAnalyzer.STRATEGY_PARAMS['rsi']['window'] = best_params[0]
+                StockAnalyzer.STRATEGY_PARAMS['rsi']['buy_th'] = best_params[1]
+                StockAnalyzer.STRATEGY_PARAMS['rsi']['sell_th'] = best_params[2]
                 print(f"STRATEGY_PARAMS에 최적 파라미터가 자동 반영되었습니다.")
             return best_params, best_result
         elif strategy_name == 'obv' and params:
@@ -435,10 +488,12 @@ class StockAnalyzer:
                 data.loc[(data['OBV'] > data['OBV_SMA']) & (data['OBV'].shift(1) <= data['OBV_SMA'].shift(1)), 'Signal'] = 1
                 data.loc[(data['OBV'] < data['OBV_SMA']) & (data['OBV'].shift(1) >= data['OBV_SMA'].shift(1)), 'Signal'] = -1
                 data['Position'] = data['Signal'].replace(to_replace=0, value=np.nan).ffill().fillna(0)
+
+                
+                data = self._simulate_trading(data) 
                 data['Returns'] = data['Close'].pct_change()
-                data['Strategy_Returns'] = data['Position'].shift(1) * data['Returns']
-                data['Strategy_Returns'] = data['Strategy_Returns'].fillna(0)
-                data['Strategy_Cumulative_Returns'] = (1 + data['Strategy_Returns']).cumprod()
+                data['Strategy_Returns'] = data['Portfolio_Value'].pct_change()
+                data['Strategy_Cumulative_Returns'] = data['Portfolio_Value'] / self.initial_capital
                 total_return = data['Strategy_Cumulative_Returns'].iloc[-1] - 1
                 results.append({'params': (obv_window,), 'total_return': total_return})
                 print(f"obv_window={obv_window} -> 총 수익률: {total_return:.2%}")
@@ -447,7 +502,7 @@ class StockAnalyzer:
                     best_params = (obv_window,)
             print(f"[obv] 최적 파라미터: obv_window={best_params[0]}, 총 수익률: {best_result:.2%}")
             if auto_update:
-                self.STRATEGY_PARAMS['obv']['obv_window'] = best_params[0]
+                StockAnalyzer.STRATEGY_PARAMS['obv']['obv_window'] = best_params[0]
                 print(f"STRATEGY_PARAMS에 최적 파라미터가 자동 반영되었습니다.")
             return best_params, best_result
         else:
@@ -571,11 +626,11 @@ def interactive_cli():
     strategy = strategy_map.get(strategy_choice, 'sma_crossover')
     analyzer = StockAnalyzer(ticker, start_date, end_date, capital)
     analyzer.fetch_data()
-    if input("파라미터 그리드서치 실행? (y/n): ").lower() == 'y':
+    if input("파라미터 그리드서치 실행? (y/n, 기본값: y): ").lower() in ['y', '']:
         analyzer.grid_search(strategy)
     bt_result = analyzer.backtest(strategy)
     analyzer.plot_results(strategy)
-    llm_thinking(analyzer, strategy, bt_result=bt_result)
+    # llm_thinking(analyzer, strategy, bt_result=bt_result)
 
 def main():
     import sys
@@ -597,7 +652,7 @@ def main():
     else:
         bt_result = analyzer.backtest(args.strategy)
         analyzer.plot_results(args.strategy)
-        llm_thinking(analyzer, args.strategy, bt_result=bt_result)
+        # llm_thinking(analyzer, args.strategy, bt_result=bt_result)
 
 if __name__ == "__main__":
     main()
