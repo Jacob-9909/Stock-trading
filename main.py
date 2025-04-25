@@ -29,6 +29,9 @@ class StockAnalyzer:
             'buy_th': [30, 35, 40, 45],
             'sell_th': [55, 60, 65, 70]
         },
+        'bollinger':{
+            'bol_window' : [7, 10, 15, 20, 25]
+        },
         'obv': {
             'obv_window': [3, 5, 7, 10]
         }
@@ -37,6 +40,7 @@ class StockAnalyzer:
         'sma_crossover': {'short_window': 3, 'long_window': 15},
         'macd': {'fast': 8, 'slow': 17, 'signal': 12},
         'rsi': {'window': 14, 'buy_th': 45, 'sell_th': 65},
+        'bollinger': {'window': 20},
         'obv': {'obv_window': 10}
     }
 
@@ -50,6 +54,7 @@ class StockAnalyzer:
             'sma_crossover': self._sma_crossover_strategy,
             'macd': self._macd_strategy,
             'rsi': self._rsi_strategy,
+            'bollinger': self._bollinger_strategy,
             'obv': self._obv_strategy,
             'combined': self._combined_strategy
         }
@@ -81,6 +86,20 @@ class StockAnalyzer:
         
         return data
 
+    def _bollinger_strategy(self,data):
+        params = StockAnalyzer.STRATEGY_PARAMS['bollinger']
+        window = params['bol_window']
+        data['sma_20_mean'] = data['Close'].rolling(window=window).mean()
+        data['sma_20_std'] = data['Close'].rolling(window=window).std()
+        data['Upper_band'] = data['sma_20_mean'] + data['sma_20_std'] * 2 
+        data['Lower_band'] = data['sma_20_mean'] - data['sma_20_std'] * 2
+        data['Signal'] = 0
+        data.loc[(data['Close'] > data['Lower_band']) & (data['Close'].shift(1) < data['Lower_band'].shift(1)), 'Signal'] = 1
+        data.loc[(data['Close'] < data['Upper_band']) & (data['Close'].shift(1) > data['Upper_band'].shift(1)), 'Signal'] = -1
+        data['Position'] = data['Signal'].replace(to_replace=0, value=np.nan).ffill().fillna(0)
+
+        return data
+    
     def _macd_strategy(self, data):
         params = StockAnalyzer.STRATEGY_PARAMS['macd']
         fast = params['fast']
@@ -156,6 +175,14 @@ class StockAnalyzer:
         data['MACD_Signal'] = 0
         data.loc[(data['MACD'] > data['Signal_Line']) & (data['MACD'].shift(1) <= data['Signal_Line'].shift(1)), 'MACD_Signal'] = 1
         data.loc[(data['MACD'] < data['Signal_Line']) & (data['MACD'].shift(1) >= data['Signal_Line'].shift(1)), 'MACD_Signal'] = -1
+        # BOLLINGER
+        data['sma_20_mean'] = data['Close'].rolling(window=20).mean()
+        data['sma_20_std'] = data['Close'].rolling(window=20).std()
+        data['Upper_band'] = data['sma_20_mean'] + data['sma_20_std'] * 2 
+        data['Lower_band'] = data['sma_20_mean'] - data['sma_20_std'] * 2
+        data['Bollinger_signal'] = 0
+        data.loc[(data['Close'] > data['Lower_band']) & (data['Close'].shift(1) < data['Lower_band'].shift(1)), 'Bollinger_Signal'] = 1
+        data.loc[(data['Close'] < data['Upper_band']) & (data['Close'].shift(1) > data['Upper_band'].shift(1)), 'Bollinger_Signal'] = -1
         # RSI
         rsi_window = strategy_params['rsi']['window']
         rsi_buy = strategy_params['rsi']['buy_th']
@@ -229,7 +256,6 @@ class StockAnalyzer:
         data = self.data.copy()
         strategy_func = self.strategies[strategy_name]
         data = strategy_func(data)
-
         data = self._simulate_trading(data)
         
         data['Returns'] = data['Close'].pct_change()
@@ -267,7 +293,6 @@ class StockAnalyzer:
             'max_drawdown': max_drawdown,
             'final_value': data['Portfolio_Value'].iloc[-1]
         }
-
 
     def plot_results(self, strategy_name='sma_crossover', strategy_params=None):
         # strategy_params가 있으면 해당 파라미터로 지표 계산
@@ -318,6 +343,11 @@ class StockAnalyzer:
             if 'OBV_SMA' in self.data.columns:
                 ax3.plot(self.data.index, self.data['OBV_SMA'], label='OBV 5일 이동평균', alpha=0.7)
             ax3.set_ylabel('OBV', fontsize=12)
+        elif strategy_name == 'bollinger':
+            ax3.plot(self.data.index, self.data['Close'], label = 'Close', alpha=0.7)
+            ax3.plot(self.data.index, self.data['Upper_band'], label ='Upper band', alpha=0.7)
+            ax3.plot(self.data.index, self.data['Lower_band'], label ='Lower band', alpha=0.7)
+            ax3.set_ylabel('Close', fontsize=12)
         else:
             ax3.plot(self.data.index, self.data['SMA_short'] - self.data['SMA_long'], label='이동평균선 차이', alpha=0.7)
             ax3.axhline(y=0, color='k', linestyle='--', alpha=0.5)
@@ -473,15 +503,7 @@ class StockAnalyzer:
             for obv_window in params['obv_window']:
                 data = self.data.copy()
                 data['OBV'] = 0
-                data['OBV'] = np.where(
-                    data['Close'] > data['Close'].shift(1),
-                    data['Volume'],
-                    np.where(
-                        data['Close'] < data['Close'].shift(1),
-                        -data['Volume'],
-                        0
-                    )
-                )
+                data['OBV'] = np.where(data['Close'] > data['Close'].shift(1),data['Volume'],np.where(data['Close'] < data['Close'].shift(1),-data['Volume'],0))
                 data['OBV'] = data['OBV'].cumsum()
                 data['OBV_SMA'] = data['OBV'].rolling(window=obv_window).mean()
                 data['Signal'] = 0
@@ -503,6 +525,33 @@ class StockAnalyzer:
             print(f"[obv] 최적 파라미터: obv_window={best_params[0]}, 총 수익률: {best_result:.2%}")
             if auto_update:
                 StockAnalyzer.STRATEGY_PARAMS['obv']['obv_window'] = best_params[0]
+                print(f"STRATEGY_PARAMS에 최적 파라미터가 자동 반영되었습니다.")
+            return best_params, best_result
+        elif strategy_name =='bollinger' and params:
+            for bol_window in params['bol_window']:
+                data = self.data.copy()
+                data['sma_20_mean'] = data['Close'].rolling(window=bol_window).mean()
+                data['sma_20_std'] = data['Close'].rolling(window=bol_window).std()
+                data['Signal'] = 0
+                data['Upper_band'] = data['sma_20_mean'] + data['sma_20_std'] * 2 
+                data['Lower_band'] = data['sma_20_mean'] - data['sma_20_std'] * 2
+                data.loc[(data['Close'] > data['Lower_band']) & (data['Close'].shift(1) < data['Lower_band'].shift(1)), 'Signal'] = 1
+                data.loc[(data['Close'] < data['Upper_band']) & (data['Close'].shift(1) > data['Upper_band'].shift(1)), 'Signal'] = -1
+                data['Position'] = data['Signal'].replace(to_replace=0, value=np.nan).ffill().fillna(0)
+
+                data = self._simulate_trading(data) 
+                data['Returns'] = data['Close'].pct_change()
+                data['Strategy_Returns'] = data['Portfolio_Value'].pct_change()
+                data['Strategy_Cumulative_Returns'] = data['Portfolio_Value'] / self.initial_capital
+                total_return = data['Strategy_Cumulative_Returns'].iloc[-1] - 1
+                results.append({'params': (bol_window,), 'total_return': total_return})
+                print(f"bol_window={bol_window} -> 총 수익률: {total_return:.2%}")
+                if best_result is None or total_return > best_result:
+                    best_result = total_return
+                    best_params = (bol_window,)
+            print(f"[bollinger] 최적 파라미터: bol_window={best_params[0]}, 총 수익률: {best_result:.2%}")
+            if auto_update:
+                StockAnalyzer.STRATEGY_PARAMS['bollinger']['bol_window'] = best_params[0]
                 print(f"STRATEGY_PARAMS에 최적 파라미터가 자동 반영되었습니다.")
             return best_params, best_result
         else:
@@ -607,7 +656,7 @@ def parse_args():
     parser.add_argument('--ticker', type=str, default='AAPL', help='주식 티커 심볼 (기본값: AAPL, Apple Inc.)')
     parser.add_argument('--start_date', type=str, default=(datetime.now() - timedelta(days=1825)).strftime('%Y-%m-%d'), help='시작 날짜 (기본값: 5년 전)')
     parser.add_argument('--end_date', type=str, default=datetime.now().strftime('%Y-%m-%d'), help='종료 날짜 (기본값: 오늘)')
-    parser.add_argument('--strategy', type=str, default='sma_crossover', choices=['sma_crossover', 'macd', 'rsi', 'obv', 'combined'], help='거래 전략 (기본값: sma_crossover)')
+    parser.add_argument('--strategy', type=str, default='sma_crossover', choices=['sma_crossover', 'macd', 'rsi', 'bollinger', 'obv', 'combined'], help='거래 전략 (기본값: sma_crossover)')
     parser.add_argument('--capital', type=float, default=100000000, help='초기 자본금 (기본값: 100,000,000원)')
     parser.add_argument('--compare', action='store_true', help='모든 전략을 비교합니다')
     parser.add_argument('--grid_search', type=str, metavar='STRATEGY', help='전략별 파라미터 그리드 서치를 수행합니다 (예: --grid_search macd)')
@@ -620,8 +669,8 @@ def interactive_cli():
     end_date = input("종료 날짜를 입력하세요 (YYYY-MM-DD, 기본: 오늘): ") or datetime.now().strftime('%Y-%m-%d')
     capital = input("초기 자본금(원, 기본: 100000000): ") or "100000000"
     capital = float(capital.replace(',', ''))
-    print("\n전략 목록: 1) sma_crossover  2) macd  3) rsi  4) obv   5) combined")
-    strategy_map = {'1': 'sma_crossover', '2': 'macd', '3': 'rsi', '4': 'obv', '5': 'combined'}
+    print("\n전략 목록: 1) sma_crossover  2) macd  3) rsi  4) bollinger  5) obv   6) combined")
+    strategy_map = {'1': 'sma_crossover', '2': 'macd', '3': 'rsi', '4': 'bollinger', '5': 'obv', '6': 'combined'}
     strategy_choice = input("전략 번호를 선택하세요 (기본: 1): ") or '1'
     strategy = strategy_map.get(strategy_choice, 'sma_crossover')
     analyzer = StockAnalyzer(ticker, start_date, end_date, capital)
