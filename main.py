@@ -82,6 +82,7 @@ class StockAnalyzer:
         data['Signal'] = 0
         data.loc[(data['SMA_short'] > data['SMA_long']) & (data['SMA_short'].shift(1) <= data['SMA_long'].shift(1)), 'Signal'] = 1 # 매수 신호
         data.loc[(data['SMA_short'] < data['SMA_long']) & (data['SMA_short'].shift(1) >= data['SMA_long'].shift(1)), 'Signal'] = -1 # 매도 신호
+        data.loc[data['Close'].pct_change() < -0.15, 'Signal'] = 1
         data['Position'] = data['Signal'].replace(to_replace=0, value=np.nan).ffill().fillna(0)
         
         return data
@@ -89,13 +90,14 @@ class StockAnalyzer:
     def _bollinger_strategy(self,data):
         params = StockAnalyzer.STRATEGY_PARAMS['bollinger']
         window = params['bol_window']
-        data['sma_20_mean'] = data['Close'].rolling(window=window).mean()
-        data['sma_20_std'] = data['Close'].rolling(window=window).std()
-        data['Upper_band'] = data['sma_20_mean'] + data['sma_20_std'] * 2 
-        data['Lower_band'] = data['sma_20_mean'] - data['sma_20_std'] * 2
+        data['sma_mean'] = data['Close'].rolling(window=window).mean()
+        data['sma_std'] = data['Close'].rolling(window=window).std()
+        data['Upper_band'] = data['sma_mean'] + data['sma_std'] * 2 
+        data['Lower_band'] = data['sma_mean'] - data['sma_std'] * 2
         data['Signal'] = 0
-        data.loc[(data['Close'] > data['Lower_band']) & (data['Close'].shift(1) < data['Lower_band'].shift(1)), 'Signal'] = 1
-        data.loc[(data['Close'] < data['Upper_band']) & (data['Close'].shift(1) > data['Upper_band'].shift(1)), 'Signal'] = -1
+        data.loc[(data['Close'] > data['Lower_band']) & (data['Close'].shift(1) < data['Lower_band'].shift(1)) & (data['Close'].shift(2) < data['Lower_band'].shift(2)), 'Signal'] = 1
+        data.loc[(data['Close'] < data['Upper_band']) & (data['Close'].shift(1) > data['Upper_band'].shift(1)) & (data['Close'].shift(2) > data['Upper_band'].shift(2)), 'Signal'] = -1
+        data.loc[data['Close'].pct_change() < -0.15, 'Signal'] = 1
         data['Position'] = data['Signal'].replace(to_replace=0, value=np.nan).ffill().fillna(0)
 
         return data
@@ -113,6 +115,7 @@ class StockAnalyzer:
         data['Signal'] = 0
         data.loc[(data['MACD'] > data['Signal_Line']) & (data['MACD'].shift(1) <= data['Signal_Line'].shift(1)), 'Signal'] = 1
         data.loc[(data['MACD'] < data['Signal_Line']) & (data['MACD'].shift(1) >= data['Signal_Line'].shift(1)), 'Signal'] = -1
+        data.loc[data['Close'].pct_change() < -0.15, 'Signal'] = 1
         data['Position'] = data['Signal'].replace(to_replace=0, value=np.nan).ffill().fillna(0)
         
         return data
@@ -133,6 +136,7 @@ class StockAnalyzer:
         data['Signal'] = 0
         data.loc[(data['RSI'] > buy_th) & (data['RSI'].shift(1) <= buy_th), 'Signal'] = 1
         data.loc[(data['RSI'] < sell_th) & (data['RSI'].shift(1) >= sell_th), 'Signal'] = -1
+        data.loc[data['Close'].pct_change() < -0.15, 'Signal'] = 1
         data['Position'] = data['Signal'].replace(to_replace=0, value=np.nan).ffill().fillna(0)
 
         return data
@@ -148,6 +152,7 @@ class StockAnalyzer:
         data['Signal'] = 0
         data.loc[(data['OBV'] > data['OBV_SMA']) & (data['OBV'].shift(1) <= data['OBV_SMA'].shift(1)), 'Signal'] = 1
         data.loc[(data['OBV'] < data['OBV_SMA']) & (data['OBV'].shift(1) >= data['OBV_SMA'].shift(1)), 'Signal'] = -1
+        data.loc[data['Close'].pct_change() < -0.15, 'Signal'] = 1
         data['Position'] = data['Signal'].replace(to_replace=0, value=np.nan).ffill().fillna(0)
 
         return data
@@ -164,6 +169,7 @@ class StockAnalyzer:
         data['SMA_Signal'] = 0
         data.loc[(data['SMA_short'] > data['SMA_long']) & (data['SMA_short'].shift(1) <= data['SMA_long'].shift(1)), 'SMA_Signal'] = 1
         data.loc[(data['SMA_short'] < data['SMA_long']) & (data['SMA_short'].shift(1) >= data['SMA_long'].shift(1)), 'SMA_Signal'] = -1
+        data.loc[data['Close'].pct_change() < -0.15, 'SMA_Signal'] = 1
         # MACD
         macd_fast = strategy_params['macd']['fast']
         macd_slow = strategy_params['macd']['slow']
@@ -175,14 +181,16 @@ class StockAnalyzer:
         data['MACD_Signal'] = 0
         data.loc[(data['MACD'] > data['Signal_Line']) & (data['MACD'].shift(1) <= data['Signal_Line'].shift(1)), 'MACD_Signal'] = 1
         data.loc[(data['MACD'] < data['Signal_Line']) & (data['MACD'].shift(1) >= data['Signal_Line'].shift(1)), 'MACD_Signal'] = -1
+        data.loc[data['Close'].pct_change() < -0.15, 'MACD_Signal'] = 1
         # BOLLINGER
-        data['sma_20_mean'] = data['Close'].rolling(window=20).mean()
-        data['sma_20_std'] = data['Close'].rolling(window=20).std()
-        data['Upper_band'] = data['sma_20_mean'] + data['sma_20_std'] * 2 
-        data['Lower_band'] = data['sma_20_mean'] - data['sma_20_std'] * 2
+        data['sma_mean'] = data['Close'].rolling(window=20).mean()
+        data['sma_std'] = data['Close'].rolling(window=20).std()
+        data['Upper_band'] = data['sma_mean'] + data['sma_std'] * 2 
+        data['Lower_band'] = data['sma_mean'] - data['sma_std'] * 2
         data['Bollinger_signal'] = 0
         data.loc[(data['Close'] > data['Lower_band']) & (data['Close'].shift(1) < data['Lower_band'].shift(1)), 'Bollinger_Signal'] = 1
         data.loc[(data['Close'] < data['Upper_band']) & (data['Close'].shift(1) > data['Upper_band'].shift(1)), 'Bollinger_Signal'] = -1
+        data.loc[data['Close'].pct_change() < -0.15, 'Bollinger_Signal'] = 1
         # RSI
         rsi_window = strategy_params['rsi']['window']
         rsi_buy = strategy_params['rsi']['buy_th']
@@ -197,6 +205,7 @@ class StockAnalyzer:
         data['RSI_Signal'] = 0
         data.loc[(data['RSI'] > rsi_buy) & (data['RSI'].shift(1) <= rsi_buy), 'RSI_Signal'] = 1
         data.loc[(data['RSI'] < rsi_sell) & (data['RSI'].shift(1) >= rsi_sell), 'RSI_Signal'] = -1
+        data.loc[data['Close'].pct_change() < -0.15, 'RSI_Signal'] = 1
         # OBV
         obv_window = strategy_params['obv']['obv_window']
         data['OBV'] = np.where(data['Close'] > data['Close'].shift(1), data['Volume'],np.where(data['Close'] < data['Close'].shift(1), -data['Volume'], 0))
@@ -205,12 +214,13 @@ class StockAnalyzer:
         data['OBV_Signal'] = 0
         data.loc[(data['OBV'] > data['OBV_SMA']) & (data['OBV'].shift(1) <= data['OBV_SMA'].shift(1)), 'OBV_Signal'] = 1
         data.loc[(data['OBV'] < data['OBV_SMA']) & (data['OBV'].shift(1) >= data['OBV_SMA'].shift(1)), 'OBV_Signal'] = -1
+        data.loc[data['Close'].pct_change() < -0.15, 'OBV_Signal'] = 1
         # 신호 집계
         data['Signal'] = 0
-        buy_count = (data['SMA_Signal'].clip(lower=0) + data['MACD_Signal'].clip(lower=0) + data['RSI_Signal'].clip(lower=0) + data['OBV_Signal'].clip(lower=0))
-        sell_count = (-data['SMA_Signal'].clip(upper=0) - data['MACD_Signal'].clip(upper=0) - data['RSI_Signal'].clip(upper=0) - data['OBV_Signal'].clip(upper=0))
-        buy_signals = (buy_count >= 3)
-        sell_signals = (sell_count >= 3)
+        buy_count = (data['SMA_Signal'].clip(lower=0) + data['MACD_Signal'].clip(lower=0) + data['RSI_Signal'].clip(lower=0) + data['Bollinger_Signal'].clip(lower=0) + data['OBV_Signal'].clip(lower=0))
+        sell_count = (-data['SMA_Signal'].clip(upper=0) - data['MACD_Signal'].clip(upper=0) - data['RSI_Signal'].clip(upper=0) - data['Bollinger_Signal'].clip(lower=0) - data['OBV_Signal'].clip(upper=0))
+        buy_signals = (buy_count >= 2)
+        sell_signals = (sell_count >= 2)
         data.loc[buy_signals, 'Signal'] = 1
         data.loc[sell_signals, 'Signal'] = -1
         data['Position'] = data['Signal'].replace(to_replace=0, value=np.nan).ffill().fillna(0)
@@ -223,8 +233,8 @@ class StockAnalyzer:
         data['Portfolio_Value'] = self.initial_capital
 
         for i in range(1, len(data)):
-            data.loc[data.index[i],'Cash'] = float(data.loc[data.index[i-1],'Cash'])
-            data.loc[data.index[i],'Shares'] = data.loc[data.index[i-1],'Shares']
+            data.loc[data.index[i],'Cash'] = float(data.loc[data.index[i-1],'Cash']) # 이전 인덱스 가져오기
+            data.loc[data.index[i],'Shares'] = data.loc[data.index[i-1],'Shares'] # 이전 인덱스 가져오기
 
             if data['Position'].iloc[i] == 1 and data['Position'].iloc[i-1] <= 0:
                 available_cash = data.loc[data.index[i-1],'Cash']
@@ -360,6 +370,11 @@ class StockAnalyzer:
         ax4.set_xlabel('날짜', fontsize=12)
         ax4.legend(loc='best')
         ax4.grid(True)
+        
+        # ax4_2 = ax4.twinx()
+        # ax4_2.bar(self.data.index, self.data['Shares'], label ='주식 보유 수', alpha=0.7, color='r') #alpha는 투명도를 설정하는 옵션
+        # ax4_2.set_ylabel('주식 보유 수', fontsize = 12)
+        # ax4_2.legend(loc='best')
         plt.tight_layout()
         plt.show()
 
@@ -371,6 +386,7 @@ class StockAnalyzer:
             print(f"\n{strategy_name} 전략 백테스팅 중...")
             analyzer = StockAnalyzer(self.ticker, self.start_date, self.end_date, self.initial_capital)
             analyzer.fetch_data(verbose=False)
+            analyzer.grid_search(strategy_name)
             results[strategy_name] = analyzer.backtest(strategy_name)
             comparison_data[strategy_name] = analyzer.data['Strategy_Cumulative_Returns']
         comparison = pd.DataFrame(results).T
@@ -530,11 +546,11 @@ class StockAnalyzer:
         elif strategy_name =='bollinger' and params:
             for bol_window in params['bol_window']:
                 data = self.data.copy()
-                data['sma_20_mean'] = data['Close'].rolling(window=bol_window).mean()
-                data['sma_20_std'] = data['Close'].rolling(window=bol_window).std()
+                data['sma_mean'] = data['Close'].rolling(window=bol_window).mean()
+                data['sma_std'] = data['Close'].rolling(window=bol_window).std()
                 data['Signal'] = 0
-                data['Upper_band'] = data['sma_20_mean'] + data['sma_20_std'] * 2 
-                data['Lower_band'] = data['sma_20_mean'] - data['sma_20_std'] * 2
+                data['Upper_band'] = data['sma_mean'] + data['sma_std'] * 2 
+                data['Lower_band'] = data['sma_mean'] - data['sma_std'] * 2
                 data.loc[(data['Close'] > data['Lower_band']) & (data['Close'].shift(1) < data['Lower_band'].shift(1)), 'Signal'] = 1
                 data.loc[(data['Close'] < data['Upper_band']) & (data['Close'].shift(1) > data['Upper_band'].shift(1)), 'Signal'] = -1
                 data['Position'] = data['Signal'].replace(to_replace=0, value=np.nan).ffill().fillna(0)
