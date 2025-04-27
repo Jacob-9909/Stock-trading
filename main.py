@@ -10,6 +10,8 @@ import openai
 import os
 from dotenv import load_dotenv
 import warnings
+import requests
+import dotenv
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
 class StockAnalyzer:
@@ -71,7 +73,7 @@ class StockAnalyzer:
             # 첫 번째 레벨(Price, Adj Close 등)만 유지
             self.data.columns = self.data.columns.get_level_values(0)        
         return self.data
-
+    
     def _sma_crossover_strategy(self, data):
         params = StockAnalyzer.STRATEGY_PARAMS['sma_crossover']
         short = params['short_window']
@@ -82,7 +84,6 @@ class StockAnalyzer:
         data['Signal'] = 0
         data.loc[(data['SMA_short'] > data['SMA_long']) & (data['SMA_short'].shift(1) <= data['SMA_long'].shift(1)), 'Signal'] = 1 # 매수 신호
         data.loc[(data['SMA_short'] < data['SMA_long']) & (data['SMA_short'].shift(1) >= data['SMA_long'].shift(1)), 'Signal'] = -1 # 매도 신호
-        data.loc[data['Close'].pct_change() < -0.15, 'Signal'] = 1
         data['Position'] = data['Signal'].replace(to_replace=0, value=np.nan).ffill().fillna(0)
         
         return data
@@ -90,14 +91,13 @@ class StockAnalyzer:
     def _bollinger_strategy(self,data):
         params = StockAnalyzer.STRATEGY_PARAMS['bollinger']
         window = params['bol_window']
-        data['sma_mean'] = data['Close'].rolling(window=window).mean()
-        data['sma_std'] = data['Close'].rolling(window=window).std()
-        data['Upper_band'] = data['sma_mean'] + data['sma_std'] * 2 
-        data['Lower_band'] = data['sma_mean'] - data['sma_std'] * 2
+        data['sma_20_mean'] = data['Close'].rolling(window=window).mean()
+        data['sma_20_std'] = data['Close'].rolling(window=window).std()
+        data['Upper_band'] = data['sma_20_mean'] + data['sma_20_std'] * 2 
+        data['Lower_band'] = data['sma_20_mean'] - data['sma_20_std'] * 2
         data['Signal'] = 0
-        data.loc[(data['Close'] > data['Lower_band']) & (data['Close'].shift(1) < data['Lower_band'].shift(1)) & (data['Close'].shift(2) < data['Lower_band'].shift(2)), 'Signal'] = 1
-        data.loc[(data['Close'] < data['Upper_band']) & (data['Close'].shift(1) > data['Upper_band'].shift(1)) & (data['Close'].shift(2) > data['Upper_band'].shift(2)), 'Signal'] = -1
-        data.loc[data['Close'].pct_change() < -0.15, 'Signal'] = 1
+        data.loc[(data['Close'] > data['Lower_band']) & (data['Close'].shift(1) < data['Lower_band'].shift(1)), 'Signal'] = 1
+        data.loc[(data['Close'] < data['Upper_band']) & (data['Close'].shift(1) > data['Upper_band'].shift(1)), 'Signal'] = -1
         data['Position'] = data['Signal'].replace(to_replace=0, value=np.nan).ffill().fillna(0)
 
         return data
@@ -115,7 +115,6 @@ class StockAnalyzer:
         data['Signal'] = 0
         data.loc[(data['MACD'] > data['Signal_Line']) & (data['MACD'].shift(1) <= data['Signal_Line'].shift(1)), 'Signal'] = 1
         data.loc[(data['MACD'] < data['Signal_Line']) & (data['MACD'].shift(1) >= data['Signal_Line'].shift(1)), 'Signal'] = -1
-        data.loc[data['Close'].pct_change() < -0.15, 'Signal'] = 1
         data['Position'] = data['Signal'].replace(to_replace=0, value=np.nan).ffill().fillna(0)
         
         return data
@@ -136,7 +135,6 @@ class StockAnalyzer:
         data['Signal'] = 0
         data.loc[(data['RSI'] > buy_th) & (data['RSI'].shift(1) <= buy_th), 'Signal'] = 1
         data.loc[(data['RSI'] < sell_th) & (data['RSI'].shift(1) >= sell_th), 'Signal'] = -1
-        data.loc[data['Close'].pct_change() < -0.15, 'Signal'] = 1
         data['Position'] = data['Signal'].replace(to_replace=0, value=np.nan).ffill().fillna(0)
 
         return data
@@ -152,7 +150,6 @@ class StockAnalyzer:
         data['Signal'] = 0
         data.loc[(data['OBV'] > data['OBV_SMA']) & (data['OBV'].shift(1) <= data['OBV_SMA'].shift(1)), 'Signal'] = 1
         data.loc[(data['OBV'] < data['OBV_SMA']) & (data['OBV'].shift(1) >= data['OBV_SMA'].shift(1)), 'Signal'] = -1
-        data.loc[data['Close'].pct_change() < -0.15, 'Signal'] = 1
         data['Position'] = data['Signal'].replace(to_replace=0, value=np.nan).ffill().fillna(0)
 
         return data
@@ -169,7 +166,6 @@ class StockAnalyzer:
         data['SMA_Signal'] = 0
         data.loc[(data['SMA_short'] > data['SMA_long']) & (data['SMA_short'].shift(1) <= data['SMA_long'].shift(1)), 'SMA_Signal'] = 1
         data.loc[(data['SMA_short'] < data['SMA_long']) & (data['SMA_short'].shift(1) >= data['SMA_long'].shift(1)), 'SMA_Signal'] = -1
-        data.loc[data['Close'].pct_change() < -0.15, 'SMA_Signal'] = 1
         # MACD
         macd_fast = strategy_params['macd']['fast']
         macd_slow = strategy_params['macd']['slow']
@@ -181,16 +177,14 @@ class StockAnalyzer:
         data['MACD_Signal'] = 0
         data.loc[(data['MACD'] > data['Signal_Line']) & (data['MACD'].shift(1) <= data['Signal_Line'].shift(1)), 'MACD_Signal'] = 1
         data.loc[(data['MACD'] < data['Signal_Line']) & (data['MACD'].shift(1) >= data['Signal_Line'].shift(1)), 'MACD_Signal'] = -1
-        data.loc[data['Close'].pct_change() < -0.15, 'MACD_Signal'] = 1
         # BOLLINGER
-        data['sma_mean'] = data['Close'].rolling(window=20).mean()
-        data['sma_std'] = data['Close'].rolling(window=20).std()
-        data['Upper_band'] = data['sma_mean'] + data['sma_std'] * 2 
-        data['Lower_band'] = data['sma_mean'] - data['sma_std'] * 2
+        data['sma_20_mean'] = data['Close'].rolling(window=20).mean()
+        data['sma_20_std'] = data['Close'].rolling(window=20).std()
+        data['Upper_band'] = data['sma_20_mean'] + data['sma_20_std'] * 2 
+        data['Lower_band'] = data['sma_20_mean'] - data['sma_20_std'] * 2
         data['Bollinger_signal'] = 0
         data.loc[(data['Close'] > data['Lower_band']) & (data['Close'].shift(1) < data['Lower_band'].shift(1)), 'Bollinger_Signal'] = 1
         data.loc[(data['Close'] < data['Upper_band']) & (data['Close'].shift(1) > data['Upper_band'].shift(1)), 'Bollinger_Signal'] = -1
-        data.loc[data['Close'].pct_change() < -0.15, 'Bollinger_Signal'] = 1
         # RSI
         rsi_window = strategy_params['rsi']['window']
         rsi_buy = strategy_params['rsi']['buy_th']
@@ -205,7 +199,6 @@ class StockAnalyzer:
         data['RSI_Signal'] = 0
         data.loc[(data['RSI'] > rsi_buy) & (data['RSI'].shift(1) <= rsi_buy), 'RSI_Signal'] = 1
         data.loc[(data['RSI'] < rsi_sell) & (data['RSI'].shift(1) >= rsi_sell), 'RSI_Signal'] = -1
-        data.loc[data['Close'].pct_change() < -0.15, 'RSI_Signal'] = 1
         # OBV
         obv_window = strategy_params['obv']['obv_window']
         data['OBV'] = np.where(data['Close'] > data['Close'].shift(1), data['Volume'],np.where(data['Close'] < data['Close'].shift(1), -data['Volume'], 0))
@@ -214,13 +207,12 @@ class StockAnalyzer:
         data['OBV_Signal'] = 0
         data.loc[(data['OBV'] > data['OBV_SMA']) & (data['OBV'].shift(1) <= data['OBV_SMA'].shift(1)), 'OBV_Signal'] = 1
         data.loc[(data['OBV'] < data['OBV_SMA']) & (data['OBV'].shift(1) >= data['OBV_SMA'].shift(1)), 'OBV_Signal'] = -1
-        data.loc[data['Close'].pct_change() < -0.15, 'OBV_Signal'] = 1
         # 신호 집계
         data['Signal'] = 0
-        buy_count = (data['SMA_Signal'].clip(lower=0) + data['MACD_Signal'].clip(lower=0) + data['RSI_Signal'].clip(lower=0) + data['Bollinger_Signal'].clip(lower=0) + data['OBV_Signal'].clip(lower=0))
-        sell_count = (-data['SMA_Signal'].clip(upper=0) - data['MACD_Signal'].clip(upper=0) - data['RSI_Signal'].clip(upper=0) - data['Bollinger_Signal'].clip(lower=0) - data['OBV_Signal'].clip(upper=0))
-        buy_signals = (buy_count >= 2)
-        sell_signals = (sell_count >= 2)
+        buy_count = (data['SMA_Signal'].clip(lower=0) + data['MACD_Signal'].clip(lower=0) + data['RSI_Signal'].clip(lower=0) + data['OBV_Signal'].clip(lower=0))
+        sell_count = (-data['SMA_Signal'].clip(upper=0) - data['MACD_Signal'].clip(upper=0) - data['RSI_Signal'].clip(upper=0) - data['OBV_Signal'].clip(upper=0))
+        buy_signals = (buy_count >= 3)
+        sell_signals = (sell_count >= 3)
         data.loc[buy_signals, 'Signal'] = 1
         data.loc[sell_signals, 'Signal'] = -1
         data['Position'] = data['Signal'].replace(to_replace=0, value=np.nan).ffill().fillna(0)
@@ -233,8 +225,8 @@ class StockAnalyzer:
         data['Portfolio_Value'] = self.initial_capital
 
         for i in range(1, len(data)):
-            data.loc[data.index[i],'Cash'] = float(data.loc[data.index[i-1],'Cash']) # 이전 인덱스 가져오기
-            data.loc[data.index[i],'Shares'] = data.loc[data.index[i-1],'Shares'] # 이전 인덱스 가져오기
+            data.loc[data.index[i],'Cash'] = float(data.loc[data.index[i-1],'Cash'])
+            data.loc[data.index[i],'Shares'] = data.loc[data.index[i-1],'Shares']
 
             if data['Position'].iloc[i] == 1 and data['Position'].iloc[i-1] <= 0:
                 available_cash = data.loc[data.index[i-1],'Cash']
@@ -370,11 +362,6 @@ class StockAnalyzer:
         ax4.set_xlabel('날짜', fontsize=12)
         ax4.legend(loc='best')
         ax4.grid(True)
-        
-        # ax4_2 = ax4.twinx()
-        # ax4_2.bar(self.data.index, self.data['Shares'], label ='주식 보유 수', alpha=0.7, color='r') #alpha는 투명도를 설정하는 옵션
-        # ax4_2.set_ylabel('주식 보유 수', fontsize = 12)
-        # ax4_2.legend(loc='best')
         plt.tight_layout()
         plt.show()
 
@@ -386,7 +373,6 @@ class StockAnalyzer:
             print(f"\n{strategy_name} 전략 백테스팅 중...")
             analyzer = StockAnalyzer(self.ticker, self.start_date, self.end_date, self.initial_capital)
             analyzer.fetch_data(verbose=False)
-            analyzer.grid_search(strategy_name)
             results[strategy_name] = analyzer.backtest(strategy_name)
             comparison_data[strategy_name] = analyzer.data['Strategy_Cumulative_Returns']
         comparison = pd.DataFrame(results).T
@@ -546,11 +532,11 @@ class StockAnalyzer:
         elif strategy_name =='bollinger' and params:
             for bol_window in params['bol_window']:
                 data = self.data.copy()
-                data['sma_mean'] = data['Close'].rolling(window=bol_window).mean()
-                data['sma_std'] = data['Close'].rolling(window=bol_window).std()
+                data['sma_20_mean'] = data['Close'].rolling(window=bol_window).mean()
+                data['sma_20_std'] = data['Close'].rolling(window=bol_window).std()
                 data['Signal'] = 0
-                data['Upper_band'] = data['sma_mean'] + data['sma_std'] * 2 
-                data['Lower_band'] = data['sma_mean'] - data['sma_std'] * 2
+                data['Upper_band'] = data['sma_20_mean'] + data['sma_20_std'] * 2 
+                data['Lower_band'] = data['sma_20_mean'] - data['sma_20_std'] * 2
                 data.loc[(data['Close'] > data['Lower_band']) & (data['Close'].shift(1) < data['Lower_band'].shift(1)), 'Signal'] = 1
                 data.loc[(data['Close'] < data['Upper_band']) & (data['Close'].shift(1) > data['Upper_band'].shift(1)), 'Signal'] = -1
                 data['Position'] = data['Signal'].replace(to_replace=0, value=np.nan).ffill().fillna(0)
@@ -582,6 +568,26 @@ def llm_thinking(analyzer, strategy_name='sma_crossover', max_rows=30, bt_result
     import yfinance as yf
     import datetime
     load_dotenv(override=True)
+
+    # 종목에 대한 리포트 (주요 지표, 최근 뉴스 등)
+    api_key = os.getenv('FMP_API_KEY')
+    symbol = analyzer.ticker
+    # Company Profile API 호출
+    profile_url = f'https://financialmodelingprep.com/api/v3/profile/{symbol}?apikey={api_key}'
+    profile_response = requests.get(profile_url)
+    profile_data = profile_response.json()[0]
+
+    profile_data = (
+    f"Beta: {profile_data['beta']}\n" # 주가의 변동성
+    f"Average Volume: {profile_data['volAvg']}\n" # 주식의 평균 거래량
+    f"Market Cap: {profile_data['mktCap']}\n" # 시가총액
+    f"52-Week Range: {profile_data['range']}\n" # 52주 최고가와 최저가
+    f"DCF Value: {profile_data['dcf']}\n"  # 할인된 현금 흐름 가치
+    f"DCF Difference: {profile_data['dcfDiff']}\n" # 할인된 현금 흐름 차이
+    )
+
+    # return beta, vol_avg, mkt_cap, range_data, dcf, dcf_diff
+
     openai_api_key = os.getenv('OPENAI_API_KEY')
     if not openai_api_key:
         print("[경고] OPENAI_API_KEY 환경변수가 설정되어 있지 않습니다.")
@@ -639,9 +645,13 @@ def llm_thinking(analyzer, strategy_name='sma_crossover', max_rows=30, bt_result
     )
     # 프롬프트 설계 (주식 트레이딩 전문가 관점)
     prompt = f"""
-        너는 주식 트레이딩 전문가다. 아래는 {analyzer.ticker} 종목의 최근 전략 결과와 데이터 요약이다.\n\n        {fng_text}{vix_text}
+        너는 주식 트레이딩 전문가다. 아래는 {analyzer.ticker} 종목의 최근 전략 결과와 데이터 요약이다.
+        \n\n        {fng_text}{vix_text}
         [최근 데이터 요약]
         {summary_text}
+
+        ['기업별 재무공시]
+        {profile_data}
 
         [전략별 백테스트 결과]
         {result_text}
@@ -657,7 +667,7 @@ def llm_thinking(analyzer, strategy_name='sma_crossover', max_rows=30, bt_result
         completion = openai.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=1000,
+            max_tokens=2000,
             temperature=0.7,
             stream=False
         )
@@ -695,7 +705,7 @@ def interactive_cli():
         analyzer.grid_search(strategy)
     bt_result = analyzer.backtest(strategy)
     analyzer.plot_results(strategy)
-    # llm_thinking(analyzer, strategy, bt_result=bt_result)
+    llm_thinking(analyzer, strategy, bt_result=bt_result)
 
 def main():
     import sys
@@ -717,7 +727,7 @@ def main():
     else:
         bt_result = analyzer.backtest(args.strategy)
         analyzer.plot_results(args.strategy)
-        # llm_thinking(analyzer, args.strategy, bt_result=bt_result)
+        llm_thinking(analyzer, args.strategy, bt_result=bt_result)
 
 if __name__ == "__main__":
     main()
