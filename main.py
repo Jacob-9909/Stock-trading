@@ -154,70 +154,93 @@ class StockAnalyzer:
 
         return data
 
-    def _combined_strategy(self, data, strategy_params=None):
-        # strategy_params에서 각 전략별 파라미터 추출
+    def _apply_strategy_for_signal(self, data, strategy_name, strategy_params=None):
+        """각 전략을 적용하고 전략 신호를 반환합니다."""
         if strategy_params is None:
             strategy_params = StockAnalyzer.STRATEGY_PARAMS
-        # SMA
-        sma_short = strategy_params['sma_crossover']['short_window']
-        sma_long = strategy_params['sma_crossover']['long_window']
-        data['SMA_short'] = data['Close'].rolling(window=sma_short).mean()
-        data['SMA_long'] = data['Close'].rolling(window=sma_long).mean()
-        data['SMA_Signal'] = 0
-        data.loc[(data['SMA_short'] > data['SMA_long']) & (data['SMA_short'].shift(1) <= data['SMA_long'].shift(1)), 'SMA_Signal'] = 1
-        data.loc[(data['SMA_short'] < data['SMA_long']) & (data['SMA_short'].shift(1) >= data['SMA_long'].shift(1)), 'SMA_Signal'] = -1
-        # MACD
-        macd_fast = strategy_params['macd']['fast']
-        macd_slow = strategy_params['macd']['slow']
-        macd_signal = strategy_params['macd']['signal']
-        data['EMA_fast'] = data['Close'].ewm(span=macd_fast, adjust=False).mean()
-        data['EMA_slow'] = data['Close'].ewm(span=macd_slow, adjust=False).mean()
-        data['MACD'] = data['EMA_fast'] - data['EMA_slow']
-        data['Signal_Line'] = data['MACD'].ewm(span=macd_signal, adjust=False).mean()
-        data['MACD_Signal'] = 0
-        data.loc[(data['MACD'] > data['Signal_Line']) & (data['MACD'].shift(1) <= data['Signal_Line'].shift(1)), 'MACD_Signal'] = 1
-        data.loc[(data['MACD'] < data['Signal_Line']) & (data['MACD'].shift(1) >= data['Signal_Line'].shift(1)), 'MACD_Signal'] = -1
-        # BOLLINGER
-        data['sma_20_mean'] = data['Close'].rolling(window=20).mean()
-        data['sma_20_std'] = data['Close'].rolling(window=20).std()
-        data['Upper_band'] = data['sma_20_mean'] + data['sma_20_std'] * 2 
-        data['Lower_band'] = data['sma_20_mean'] - data['sma_20_std'] * 2
-        data['Bollinger_signal'] = 0
-        data.loc[(data['Close'] > data['Lower_band']) & (data['Close'].shift(1) < data['Lower_band'].shift(1)), 'Bollinger_Signal'] = 1
-        data.loc[(data['Close'] < data['Upper_band']) & (data['Close'].shift(1) > data['Upper_band'].shift(1)), 'Bollinger_Signal'] = -1
-        # RSI
-        rsi_window = strategy_params['rsi']['window']
-        rsi_buy = strategy_params['rsi']['buy_th']
-        rsi_sell = strategy_params['rsi']['sell_th']
-        delta = data['Close'].diff()
-        gain = delta.where(delta > 0, 0)
-        loss = -delta.where(delta < 0, 0)
-        avg_gain = gain.rolling(window=rsi_window).mean()
-        avg_loss = loss.rolling(window=rsi_window).mean()
-        rs = avg_gain / avg_loss
-        data['RSI'] = 100 - (100 / (1 + rs))
-        data['RSI_Signal'] = 0
-        data.loc[(data['RSI'] > rsi_buy) & (data['RSI'].shift(1) <= rsi_buy), 'RSI_Signal'] = 1
-        data.loc[(data['RSI'] < rsi_sell) & (data['RSI'].shift(1) >= rsi_sell), 'RSI_Signal'] = -1
-        # OBV
-        obv_window = strategy_params['obv']['obv_window']
-        data['OBV'] = np.where(data['Close'] > data['Close'].shift(1), data['Volume'],np.where(data['Close'] < data['Close'].shift(1), -data['Volume'], 0))
-        data['OBV'] = data['OBV'].cumsum()
-        data['OBV_SMA'] = data['OBV'].rolling(window=obv_window).mean()
-        data['OBV_Signal'] = 0
-        data.loc[(data['OBV'] > data['OBV_SMA']) & (data['OBV'].shift(1) <= data['OBV_SMA'].shift(1)), 'OBV_Signal'] = 1
-        data.loc[(data['OBV'] < data['OBV_SMA']) & (data['OBV'].shift(1) >= data['OBV_SMA'].shift(1)), 'OBV_Signal'] = -1
+        
+        # 원본 데이터를 복사하여 전략 적용
+        strategy_data = data.copy()
+        
+        # 각 전략별 함수를 호출하여 신호 생성
+        if strategy_name in self.strategies and strategy_name != 'combined':
+            strategy_func = self.strategies[strategy_name]
+            result_data = strategy_func(strategy_data)
+            return result_data['Signal']  # 신호만 반환
+        
+        return None
+        
+    def _combined_strategy(self, data, strategy_params=None):
+        """각 전략의 신호를 결합하여 최종 매매 신호를 생성합니다."""
+        if strategy_params is None:
+            strategy_params = StockAnalyzer.STRATEGY_PARAMS
+            
+        # 원본 데이터 복사
+        result_data = data.copy()
+        
+        # 각 전략별 신호 계산
+        sma_signal = self._apply_strategy_for_signal(data, 'sma_crossover', strategy_params)
+        macd_signal = self._apply_strategy_for_signal(data, 'macd', strategy_params)
+        bollinger_signal = self._apply_strategy_for_signal(data, 'bollinger', strategy_params)
+        rsi_signal = self._apply_strategy_for_signal(data, 'rsi', strategy_params)
+        obv_signal = self._apply_strategy_for_signal(data, 'obv', strategy_params)
+        
+        # 각 전략별 신호를 결과 데이터에 추가
+        result_data['SMA_Signal'] = sma_signal
+        result_data['MACD_Signal'] = macd_signal
+        result_data['Bollinger_Signal'] = bollinger_signal
+        result_data['RSI_Signal'] = rsi_signal
+        result_data['OBV_Signal'] = obv_signal
+        
         # 신호 집계
-        data['Signal'] = 0
-        buy_count = (data['SMA_Signal'].clip(lower=0) + data['MACD_Signal'].clip(lower=0) + data['RSI_Signal'].clip(lower=0) + data['OBV_Signal'].clip(lower=0))
-        sell_count = (-data['SMA_Signal'].clip(upper=0) - data['MACD_Signal'].clip(upper=0) - data['RSI_Signal'].clip(upper=0) - data['OBV_Signal'].clip(upper=0))
+        result_data['Signal'] = 0
+        buy_count = (result_data['SMA_Signal'].clip(lower=0) + 
+                     result_data['MACD_Signal'].clip(lower=0) + 
+                     result_data['Bollinger_Signal'].clip(lower=0) + 
+                     result_data['RSI_Signal'].clip(lower=0) + 
+                     result_data['OBV_Signal'].clip(lower=0))
+        
+        sell_count = (-result_data['SMA_Signal'].clip(upper=0) - 
+                      result_data['MACD_Signal'].clip(upper=0) - 
+                      result_data['Bollinger_Signal'].clip(upper=0) - 
+                      result_data['RSI_Signal'].clip(upper=0) - 
+                      result_data['OBV_Signal'].clip(upper=0))
+        
+        # 3개 이상의 전략에서 같은 신호가 나오면 매매 시그널 생성
         buy_signals = (buy_count >= 3)
         sell_signals = (sell_count >= 3)
-        data.loc[buy_signals, 'Signal'] = 1
-        data.loc[sell_signals, 'Signal'] = -1
-        data['Position'] = data['Signal'].replace(to_replace=0, value=np.nan).ffill().fillna(0)
-
-        return data
+        
+        result_data.loc[buy_signals, 'Signal'] = 1
+        result_data.loc[sell_signals, 'Signal'] = -1
+        result_data['Position'] = result_data['Signal'].replace(to_replace=0, value=np.nan).ffill().fillna(0)
+        
+        # 각 전략의 지표값도 결과 데이터에 추가하여 나중에 분석할 수 있게 함
+        # SMA 관련 지표
+        sma_data = self._sma_crossover_strategy(data.copy())
+        result_data['SMA_short'] = sma_data['SMA_short']
+        result_data['SMA_long'] = sma_data['SMA_long']
+        
+        # MACD 관련 지표
+        macd_data = self._macd_strategy(data.copy())
+        result_data['MACD'] = macd_data['MACD']
+        result_data['Signal_Line'] = macd_data['Signal_Line']
+        
+        # Bollinger Bands 관련 지표
+        bollinger_data = self._bollinger_strategy(data.copy())
+        result_data['Upper_band'] = bollinger_data['Upper_band']
+        result_data['Lower_band'] = bollinger_data['Lower_band']
+        result_data['sma_20_mean'] = bollinger_data['sma_20_mean']
+        
+        # RSI 관련 지표
+        rsi_data = self._rsi_strategy(data.copy())
+        result_data['RSI'] = rsi_data['RSI']
+        
+        # OBV 관련 지표
+        obv_data = self._obv_strategy(data.copy())
+        result_data['OBV'] = obv_data['OBV']
+        result_data['OBV_SMA'] = obv_data['OBV_SMA']
+        
+        return result_data
 
     def _simulate_trading(self, data):
         data['Cash'] = self.initial_capital
@@ -645,23 +668,31 @@ def llm_thinking(analyzer, strategy_name='sma_crossover', max_rows=30, bt_result
     )
     # 프롬프트 설계 (주식 트레이딩 전문가 관점)
     prompt = f"""
-        너는 주식 트레이딩 전문가다. 아래는 {analyzer.ticker} 종목의 최근 전략 결과와 데이터 요약이다.
-        \n\n        {fng_text}{vix_text}
-        [최근 데이터 요약]
-        {summary_text}
+    너는 주식 리서치 및 트레이딩 전략 분석에 특화된 금융 전문가다. 아래는 {analyzer.ticker} 종목에 대한 최신 데이터와 전략 분석 결과이다.
 
-        ['기업별 재무공시]
-        {profile_data}
+    {fng_text}{vix_text}
 
-        [전략별 백테스트 결과]
-        {result_text}
+    [📌 종목 및 시장 데이터 요약]  
+    {summary_text}
 
-        아래 3가지를 전문가 관점에서 한국어로 자연스럽게 작성해줘.
-        1. 현재 전략에 대한 투자의견 (매수/매도/관망 등)
-        2. 전략 추천 및 이유
-        3. 데이터와 전략 결과를 바탕으로 한 리포트 (시장 상황, 리스크, 참고사항 등)
+    [🏢 기업 재무 정보 및 기본 사항]  
+    {profile_data}
 
-        각 항목을 번호로 구분해서 5~10문장 이내로 구체적으로 작성해줘."""
+    [📈 전략별 백테스트 결과]  
+    {result_text}
+
+    위 정보를 기반으로 다음 내용을 포함하여 전문가 시각에서 종합적인 분석 리포트를 한국어로 작성하라:
+
+    - 종목에 대한 현 시점 투자 판단 (예: 매수/보유/매도)과 그 근거  
+    - 시장 상황, 변동성 지표 등을 반영한 해석  
+    - 유의미한 전략적 인사이트 및 추천 전략 (있다면 전략명 포함)  
+    - 데이터와 전략 성과를 바탕으로 한 리스크 요인 및 참고사항  
+    - 기타 투자자 관점에서 알아야 할 실질적인 조언
+
+    내용은 구조화되어 있으되, 반드시 항목 수를 고정하지 말고 유연하게 구성할 것.  
+    전문 리서치 보고서처럼 자연스럽고 명확한 문장으로 작성하며, 전체 분량은 간결하지만 핵심이 잘 드러나도록 한다 (각 항목당 5~10문장 이내 권장).
+    """
+
     # OpenAI API 호출
     try:
         completion = openai.chat.completions.create(
