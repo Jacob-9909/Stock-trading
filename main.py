@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 import warnings
 import requests
 import dotenv
+from textblob import TextBlob
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
 class StockAnalyzer:
@@ -737,7 +738,7 @@ def interactive_cli():
     bt_result = analyzer.backtest(strategy)
     analyzer.plot_results(strategy)
     llm_thinking(analyzer, strategy, bt_result=bt_result)
-
+    
 def main():
     import sys
     if len(sys.argv) == 1:
