@@ -19,8 +19,8 @@ class StockAnalyzer:
     """주식 데이터 분석 및 거래 전략 백테스트 클래스"""
     GRID_SEARCH_PARAMS = {
         'sma_crossover': {
-            'short_window': [3, 5, 7, 10],
-            'long_window': [10, 15, 20, 30]
+            'short_window': [3, 4, 5, 6, 7, 10],
+            'long_window': [10, 13, 15, 17, 20, 25, 30]
         },
         'macd': {
             'fast': [5, 8, 12],
@@ -33,10 +33,10 @@ class StockAnalyzer:
             'sell_th': [55, 60, 65, 70]
         },
         'bollinger':{
-            'bol_window' : [7, 10, 15, 20, 25]
+            'bol_window' : [5, 7, 10, 15, 20, 25, 30]
         },
         'obv': {
-            'obv_window': [3, 5, 7, 10]
+            'obv_window': [3, 4, 5, 6, 7, 10]
         }
     }
     STRATEGY_PARAMS = {
@@ -47,7 +47,7 @@ class StockAnalyzer:
         'obv': {'obv_window': 10}
     }
 
-    def __init__(self, ticker, start_date, end_date, initial_capital=100_000_000):
+    def __init__(self, ticker, start_date, end_date, initial_capital=100000000):
         self.ticker = ticker
         self.start_date = start_date
         self.end_date = end_date
@@ -584,7 +584,7 @@ class StockAnalyzer:
             print("해당 전략은 그리드 서치가 지원되지 않습니다.")
             return None, None
 
-def llm_thinking(analyzer, strategy_name='sma_crossover', max_rows=30, bt_result=None):
+def llm_thinking(analyzer, strategy_name='sma_crossover', max_rows=60, bt_result=None):
     """
     OpenAI LLM을 활용해 주식 전략 결과를 요약하고, 전문가 관점의 투자의견/전략추천/리포트를 생성합니다.
     """
@@ -610,11 +610,9 @@ def llm_thinking(analyzer, strategy_name='sma_crossover', max_rows=30, bt_result
     f"DCF Difference: {profile_data['dcfDiff']}\n" # 할인된 현금 흐름 차이
     )
 
-    # return beta, vol_avg, mkt_cap, range_data, dcf, dcf_diff
-
     openai_api_key = os.getenv('OPENAI_API_KEY')
     if not openai_api_key:
-        print("[경고] OPENAI_API_KEY 환경변수가 설정되어 있지 않습니다.")
+        print("OPENAI_API_KEY 환경변수가 설정되어 있지 않습니다.")
         return None
     openai.api_key = openai_api_key
 
@@ -669,29 +667,31 @@ def llm_thinking(analyzer, strategy_name='sma_crossover', max_rows=30, bt_result
     )
     # 프롬프트 설계 (주식 트레이딩 전문가 관점)
     prompt = f"""
-    너는 주식 리서치 및 트레이딩 전략 분석에 특화된 금융 전문가다. 아래는 {analyzer.ticker} 종목에 대한 최신 데이터와 전략 분석 결과이다.
+    너는 주식 리서치 및 트레이딩 전략 분석에 특화된 최고 수준의 금융 전문가다. 아래는 {analyzer.ticker} 종목에 대한 최신 데이터와 전략 분석 결과이다.
+    {fng_text}
+    {vix_text}
+    ---
+    ### [핵심 데이터 요약]
+    종목 및 시장 개요:
+        {summary_text}
+    기업 재무 및 사업 분석:
+        {profile_data}
+    *전략 백테스트 성과:
+        {result_text}
+    ---
+    위의 심층 데이터를 기반으로, {analyzer.ticker} 종목에 대한 전문가 시각의 종합 투자 분석 리포트를 한국어로 작성하라. 리포트는 다음 핵심 내용을 포함해야 한다:
 
-    {fng_text}{vix_text}
-
-    [📌 종목 및 시장 데이터 요약]  
-    {summary_text}
-
-    [🏢 기업 재무 정보 및 기본 사항]  
-    {profile_data}
-
-    [📈 전략별 백테스트 결과]  
-    {result_text}
-
-    위 정보를 기반으로 다음 내용을 포함하여 전문가 시각에서 종합적인 분석 리포트를 한국어로 작성하라:
-
-    - 종목에 대한 현 시점 투자 판단 (예: 매수/보유/매도)과 그 근거  
-    - 시장 상황, 변동성 지표 등을 반영한 해석  
-    - 유의미한 전략적 인사이트 및 추천 전략 (있다면 전략명 포함)  
-    - 데이터와 전략 성과를 바탕으로 한 리스크 요인 및 참고사항  
-    - 기타 투자자 관점에서 알아야 할 실질적인 조언
-
-    내용은 구조화되어 있으되, 반드시 항목 수를 고정하지 말고 유연하게 구성할 것.  
-    전문 리서치 보고서처럼 자연스럽고 명확한 문장으로 작성하며, 전체 분량은 간결하지만 핵심이 잘 드러나도록 한다 (각 항목당 5~10문장 이내 권장).
+    1.  투자 판단 및 근거: 현 시점에서의 명확한 투자 의견 (예: 강력 매수/매수/보유/매도/강력 매도)과 그에 대한 심층적인 근거를 제시하라. 시장 상황, 기업 펀더멘털, 그리고 백테스트 결과를 종합적으로 고려하여 설명해야 한다.
+    2.  시장 환경 및 변동성 분석: 현재 시장의 거시경제적 상황, 투자 심리(FNG 지수), 그리고 시장 변동성(VIX 지수)이 {analyzer.ticker} 종목에 미치는 영향을 구체적으로 분석하고 해석하라.
+    3.  핵심 전략 인사이트 및 추천: 백테스트 결과에서 도출된 가장 유의미한 전략적 인사이트를 강조하고, 투자 성과 개선에 기여할 수 있는 최적의 추천 전략 (전략명 포함)을 제시하라. 추천 전략의 핵심 로직과 기대 효과를 간략히 설명해야 한다.
+    4.  리스크 요인 및 유의사항: 데이터와 전략 성과를 기반으로 {analyzer.ticker} 투자 시 발생할 수 있는 주요 리스크 요인을 명확히 명시하고, 투자자가 반드시 인지하고 있어야 할 실질적인 참고사항 및 주의점을 포함하라.
+    5.  종합 투자 조언: 위 내용을 바탕으로 투자자가 {analyzer.ticker} 종목에 대해 고려해야 할 실용적이고 실행 가능한 최종 조언을 제공하라. 장기적 관점과 단기적 관점을 아우르는 조언을 포함할 수 있다.
+    ---
+    작성 가이드라인:
+    구조화 및 명확성: 내용은 각 항목별로 명확히 구분되도록 구조화하되, 유연하게 구성할 수 있다.
+    전문성 및 간결성: 전문 리서치 보고서처럼 자연스럽고 명확한 문체로 작성하며, 전체 분량은 간결하지만 핵심 내용이 충분히 드러나도록 한다 (각 항목당 3~7문장 이내 권장).
+    실질적 가치: 단순한 정보 나열을 넘어, 투자자에게 실질적인 가치를 제공하는 분석과 조언에 집중한다.
+    어조: 금융 전문가로서의 신뢰감 있고 객관적인 어조를 유지한다.
     """
 
     # OpenAI API 호출
@@ -722,8 +722,8 @@ def parse_args():
 
 def interactive_cli():
     print("\n===== 인터랙티브 모드: 주식 거래 결정 시스템 =====")
-    ticker = input("주식 티커 심볼을 입력하세요 (예: AAPL): ") or "AAPL"
-    start_date = input("시작 날짜를 입력하세요 (YYYY-MM-DD, 기본: 5년 전): ") or (datetime.now() - timedelta(days=1825)).strftime('%Y-%m-%d')
+    ticker = input("주식 티커 심볼을 입력하세요 (예: AAPL): ") or "AAPL" 
+    start_date = input("시작 날짜를 입력하세요 (YYYY-MM-DD, 기본: 3년 전): ") or (datetime.now() - timedelta(days=1095)).strftime('%Y-%m-%d')
     end_date = input("종료 날짜를 입력하세요 (YYYY-MM-DD, 기본: 오늘): ") or datetime.now().strftime('%Y-%m-%d')
     capital = input("초기 자본금(원, 기본: 100000000): ") or "100000000"
     capital = float(capital.replace(',', ''))
