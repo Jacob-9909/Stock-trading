@@ -11,7 +11,6 @@ import os
 from dotenv import load_dotenv
 import warnings
 import requests
-import dotenv
 from textblob import TextBlob
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
@@ -43,9 +42,12 @@ class StockAnalyzer:
         'sma_crossover': {'short_window': 3, 'long_window': 15},
         'macd': {'fast': 8, 'slow': 17, 'signal': 12},
         'rsi': {'window': 14, 'buy_th': 45, 'sell_th': 65},
-        'bollinger': {'window': 20},
+        'bollinger': {'bol_window': 20},  # 🔴 버그 수정: 'window' → 'bol_window'
         'obv': {'obv_window': 10}
     }
+    
+    # Combined 전략 임계값 (매직 넘버 상수화)
+    COMBINED_STRATEGY_THRESHOLD = 3
 
     def __init__(self, ticker, start_date, end_date, initial_capital=100000000):
         self.ticker = ticker
@@ -207,9 +209,9 @@ class StockAnalyzer:
                       result_data['RSI_Signal'].clip(upper=0) - 
                       result_data['OBV_Signal'].clip(upper=0))
         
-        # 3개 이상의 전략에서 같은 신호가 나오면 매매 시그널 생성
-        buy_signals = (buy_count >= 3)
-        sell_signals = (sell_count >= 3)
+        # N개 이상의 전략에서 같은 신호가 나오면 매매 시그널 생성
+        buy_signals = (buy_count >= StockAnalyzer.COMBINED_STRATEGY_THRESHOLD)
+        sell_signals = (sell_count >= StockAnalyzer.COMBINED_STRATEGY_THRESHOLD)
         
         result_data.loc[buy_signals, 'Signal'] = 1
         result_data.loc[sell_signals, 'Signal'] = -1
@@ -274,6 +276,23 @@ class StockAnalyzer:
 
             data.loc[data.index[i], 'Portfolio_Value'] = float(data.loc[data.index[i], 'Cash'] + (data.loc[data.index[i], 'Shares'] * data.loc[data.index[i], 'Close']))
         return data
+
+    def _evaluate_strategy_performance(self, data):
+        """
+        전략 성과를 평가하는 공통 헬퍼 메서드 (코드 중복 제거)
+        
+        Args:
+            data: 전략이 적용된 DataFrame (Signal, Position 포함)
+            
+        Returns:
+            float: 총 수익률 (예: 0.15 = 15%)
+        """
+        data = self._simulate_trading(data)
+        data['Returns'] = data['Close'].pct_change()
+        data['Strategy_Returns'] = data['Portfolio_Value'].pct_change()
+        data['Strategy_Cumulative_Returns'] = data['Portfolio_Value'] / self.initial_capital
+        total_return = data['Strategy_Cumulative_Returns'].iloc[-1] - 1
+        return total_return
 
     def backtest(self, strategy_name='sma_crossover'):
         if self.data is None or self.data.empty:
@@ -440,11 +459,7 @@ class StockAnalyzer:
                     data.loc[(data['SMA_short'] < data['SMA_long']) & (data['SMA_short'].shift(1) >= data['SMA_long'].shift(1)), 'Signal'] = -1
                     data['Position'] = data['Signal'].replace(to_replace=0, value=np.nan).ffill().fillna(0)
                     
-                    data = self._simulate_trading(data) 
-                    data['Returns'] = data['Close'].pct_change()
-                    data['Strategy_Returns'] = data['Portfolio_Value'].pct_change()
-                    data['Strategy_Cumulative_Returns'] = data['Portfolio_Value'] / self.initial_capital
-                    total_return = data['Strategy_Cumulative_Returns'].iloc[-1] - 1
+                    total_return = self._evaluate_strategy_performance(data)
                     results.append({'params': (short, long), 'total_return': total_return})
                     print(f"short_window={short}, long_window={long} -> 총 수익률: {total_return:.2%}")
                     if best_result is None or total_return > best_result:
@@ -472,11 +487,7 @@ class StockAnalyzer:
                         data.loc[(data['MACD'] < data['Signal_Line']) & (data['MACD'].shift(1) >= data['Signal_Line'].shift(1)), 'Signal'] = -1
                         data['Position'] = data['Signal'].replace(to_replace=0, value=np.nan).ffill().fillna(0)
 
-                        data = self._simulate_trading(data) 
-                        data['Returns'] = data['Close'].pct_change()
-                        data['Strategy_Returns'] = data['Portfolio_Value'].pct_change()
-                        data['Strategy_Cumulative_Returns'] = data['Portfolio_Value'] / self.initial_capital
-                        total_return = data['Strategy_Cumulative_Returns'].iloc[-1] - 1
+                        total_return = self._evaluate_strategy_performance(data)
                         results.append({'params': (fast, slow, signal), 'total_return': total_return})
                         print(f"fast={fast}, slow={slow}, signal={signal} -> 총 수익률: {total_return:.2%}")
                         if best_result is None or total_return > best_result:
@@ -508,11 +519,7 @@ class StockAnalyzer:
                         data.loc[(data['RSI'] < sell_th) & (data['RSI'].shift(1) >= sell_th), 'Signal'] = -1
                         data['Position'] = data['Signal'].replace(to_replace=0, value=np.nan).ffill().fillna(0)
 
-                        data = self._simulate_trading(data) 
-                        data['Returns'] = data['Close'].pct_change()
-                        data['Strategy_Returns'] = data['Portfolio_Value'].pct_change()
-                        data['Strategy_Cumulative_Returns'] = data['Portfolio_Value'] / self.initial_capital
-                        total_return = data['Strategy_Cumulative_Returns'].iloc[-1] - 1
+                        total_return = self._evaluate_strategy_performance(data)
                         results.append({'params': (window, buy_th, sell_th), 'total_return': total_return})
                         print(f"window={window}, buy_th={buy_th}, sell_th={sell_th} -> 총 수익률: {total_return:.2%}")
                         if best_result is None or total_return > best_result:
@@ -538,11 +545,7 @@ class StockAnalyzer:
                 data['Position'] = data['Signal'].replace(to_replace=0, value=np.nan).ffill().fillna(0)
 
                 
-                data = self._simulate_trading(data) 
-                data['Returns'] = data['Close'].pct_change()
-                data['Strategy_Returns'] = data['Portfolio_Value'].pct_change()
-                data['Strategy_Cumulative_Returns'] = data['Portfolio_Value'] / self.initial_capital
-                total_return = data['Strategy_Cumulative_Returns'].iloc[-1] - 1
+                total_return = self._evaluate_strategy_performance(data)
                 results.append({'params': (obv_window,), 'total_return': total_return})
                 print(f"obv_window={obv_window} -> 총 수익률: {total_return:.2%}")
                 if best_result is None or total_return > best_result:
@@ -565,11 +568,7 @@ class StockAnalyzer:
                 data.loc[(data['Close'] < data['Upper_band']) & (data['Close'].shift(1) > data['Upper_band'].shift(1)), 'Signal'] = -1
                 data['Position'] = data['Signal'].replace(to_replace=0, value=np.nan).ffill().fillna(0)
 
-                data = self._simulate_trading(data) 
-                data['Returns'] = data['Close'].pct_change()
-                data['Strategy_Returns'] = data['Portfolio_Value'].pct_change()
-                data['Strategy_Cumulative_Returns'] = data['Portfolio_Value'] / self.initial_capital
-                total_return = data['Strategy_Cumulative_Returns'].iloc[-1] - 1
+                total_return = self._evaluate_strategy_performance(data)
                 results.append({'params': (bol_window,), 'total_return': total_return})
                 print(f"bol_window={bol_window} -> 총 수익률: {total_return:.2%}")
                 if best_result is None or total_return > best_result:
